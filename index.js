@@ -36,7 +36,7 @@ const products = [
   { id: "ipa_month", name: "Key IPA - Tháng", price: 120000 }
 ];
 
-const QR_IMAGE = "https://cdn.discordapp.com/attachments/1424762608694853809/1476458474824011898/IMG_1858.jpg";
+const QR_IMAGE = "https://cdn.discordapp.com/attachments/1424762608694853809/1476463256519442452/IMG_1910.png?ex=69a1370f&is=699fe58f&hm=853e9d763f078b2b17867b5d2aa84bc75e213f1b2ff387bfffa7a5acf34089f3";
 
 // ===== DISCORD =====
 const client = new Client({
