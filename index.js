@@ -6,7 +6,10 @@ const {
   GatewayIntentBits,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require("discord.js");
 
 const client = new Client({
@@ -25,6 +28,7 @@ let keys = fs.existsSync("./keys.json")
   : { day: [], week: [], month: [] };
 
 let pendingDeposits = {};
+let panelMessage = null;
 
 const QR_IMAGE = "https://cdn.discordapp.com/attachments/1424762608694853809/1476458474824011898/IMG_1858.jpg";
 
@@ -36,7 +40,7 @@ function saveKeys() {
   fs.writeFileSync("./keys.json", JSON.stringify(keys, null, 2));
 }
 
-function createPanel() {
+function createUserPanel() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("nap")
@@ -50,153 +54,228 @@ function createPanel() {
 
     new ButtonBuilder()
       .setCustomId("buy_day")
-      .setLabel("📅 Ngày (15K)")
+      .setLabel(`📅 Ngày (15K) [${keys.day.length}]`)
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId("buy_week")
-      .setLabel("📆 Tuần (70K)")
+      .setLabel(`📆 Tuần (70K) [${keys.week.length}]`)
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId("buy_month")
-      .setLabel("🗓 Tháng (120K)")
+      .setLabel(`🗓 Tháng (120K) [${keys.month.length}]`)
       .setStyle(ButtonStyle.Secondary)
   );
 }
 
-client.once("ready", async () => {
-  console.log("Bot ready");
+function createAdminPanel() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("add_day")
+      .setLabel("➕ Add Day")
+      .setStyle(ButtonStyle.Danger),
 
-  try {
-    const channel = await client.channels.fetch(process.env.CHANNEL_ID);
-    if (!channel) return console.log("Không tìm thấy channel");
+    new ButtonBuilder()
+      .setCustomId("add_week")
+      .setLabel("➕ Add Week")
+      .setStyle(ButtonStyle.Danger),
 
-    // 🛑 XÓA PANEL CŨ (tránh spam khi restart)
-    const messages = await channel.messages.fetch({ limit: 10 });
-    const botPanel = messages.find(
-      m => m.author.id === client.user.id && m.content.includes("PANEL MUA KEY")
-    );
-    if (botPanel) await botPanel.delete();
+    new ButtonBuilder()
+      .setCustomId("add_month")
+      .setLabel("➕ Add Month")
+      .setStyle(ButtonStyle.Danger)
+  );
+}
 
-    await channel.send({
+async function sendOrUpdatePanel() {
+  const channel = await client.channels.fetch(process.env.CHANNEL_ID);
+  if (!channel) return;
+
+  if (!panelMessage) {
+    panelMessage = await channel.send({
       content: "🎯 PANEL MUA KEY IPA",
       files: [QR_IMAGE],
-      components: [createPanel()]
+      components: [
+        createUserPanel(),
+        createAdminPanel()
+      ]
     });
-
-  } catch (err) {
-    console.log("Lỗi gửi panel:", err);
+  } else {
+    await panelMessage.edit({
+      content: "🎯 PANEL MUA KEY IPA",
+      components: [
+        createUserPanel(),
+        createAdminPanel()
+      ]
+    });
   }
+}
+
+client.once("ready", async () => {
+  console.log("Bot ready");
+  await sendOrUpdatePanel();
 });
 
 client.on("interactionCreate", async interaction => {
-  if (!interaction.isButton()) return;
 
-  const userId = interaction.user.id;
-  if (!balances[userId]) balances[userId] = 0;
+  if (interaction.isButton()) {
 
-  if (interaction.customId === "nap") {
+    const userId = interaction.user.id;
+    if (!balances[userId]) balances[userId] = 0;
 
-    const depositCode =
-      "NAP" + userId.slice(-5) + Math.floor(Math.random() * 100);
+    // ====================
+    // NẠP TIỀN
+    // ====================
+    if (interaction.customId === "nap") {
 
-    pendingDeposits[depositCode] = userId;
+      const code =
+        "NAP" +
+        userId.slice(-5) +
+        Math.floor(Math.random() * 100);
 
-    return interaction.reply({
-      content:
-        `🏦 Quét QR bên trên để nạp tiền\n\n` +
-        `📌 Nội dung chuyển khoản:\n${depositCode}\n\n` +
-        `⚠ Ghi đúng nội dung để được cộng tiền.`,
-      ephemeral: true
-    });
+      pendingDeposits[code] = userId;
+
+      return interaction.reply({
+        content:
+          `🏦 Quét QR để nạp tiền\n\n` +
+          `📌 Nội dung chuyển khoản:\n${code}\n\n` +
+          `⚠ Ghi đúng nội dung để được cộng tiền.`,
+        ephemeral: true
+      });
+    }
+
+    if (interaction.customId === "balance") {
+      return interaction.reply({
+        content: `💳 Số dư: ${balances[userId]} VNĐ`,
+        ephemeral: true
+      });
+    }
+
+    // ====================
+    // MUA KEY
+    // ====================
+    const prices = {
+      buy_day: 15000,
+      buy_week: 70000,
+      buy_month: 120000
+    };
+
+    if (prices[interaction.customId]) {
+
+      const type = interaction.customId.split("_")[1];
+
+      if (balances[userId] < prices[interaction.customId]) {
+        return interaction.reply({
+          content: "❌ Không đủ tiền",
+          ephemeral: true
+        });
+      }
+
+      if (keys[type].length === 0) {
+        return interaction.reply({
+          content: "❌ Hết key",
+          ephemeral: true
+        });
+      }
+
+      const key = keys[type].shift();
+      balances[userId] -= prices[interaction.customId];
+
+      saveBalances();
+      saveKeys();
+      await sendOrUpdatePanel();
+
+      return interaction.reply({
+        content: `✅ Mua thành công\n🔑 ${key}`,
+        ephemeral: true
+      });
+    }
+
+    // ====================
+    // ADMIN ADD KEY
+    // ====================
+    if (interaction.user.id !== process.env.ADMIN_ID)
+      return interaction.reply({ content: "Không có quyền", ephemeral: true });
+
+    if (interaction.customId.startsWith("add_")) {
+
+      const type = interaction.customId.split("_")[1];
+
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_${type}`)
+        .setTitle("Nhập Key");
+
+      const input = new TextInputBuilder()
+        .setCustomId("key_input")
+        .setLabel("Nhập key cần thêm")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(input)
+      );
+
+      return interaction.showModal(modal);
+    }
   }
 
-  if (interaction.customId === "balance") {
-    return interaction.reply({
-      content: `💳 Số dư của bạn: ${balances[userId]} VNĐ`,
-      ephemeral: true
-    });
-  }
+  // ====================
+  // XỬ LÝ MODAL ADD KEY
+  // ====================
+  if (interaction.isModalSubmit()) {
 
-  const prices = {
-    buy_day: 15000,
-    buy_week: 70000,
-    buy_month: 120000
-  };
-
-  if (prices[interaction.customId]) {
+    if (interaction.user.id !== process.env.ADMIN_ID)
+      return interaction.reply({ content: "Không có quyền", ephemeral: true });
 
     const type = interaction.customId.split("_")[1];
+    const key = interaction.fields.getTextInputValue("key_input");
 
-    if (balances[userId] < prices[interaction.customId]) {
-      return interaction.reply({
-        content: "❌ Không đủ tiền",
-        ephemeral: true
-      });
-    }
-
-    if (!keys[type] || keys[type].length === 0) {
-      return interaction.reply({
-        content: "❌ Hết key",
-        ephemeral: true
-      });
-    }
-
-    const key = keys[type].shift();
-    balances[userId] -= prices[interaction.customId];
-
-    saveBalances();
+    keys[type].push(key);
     saveKeys();
+    await sendOrUpdatePanel();
 
     return interaction.reply({
-      content: `✅ Mua thành công\n🔑 Key: ${key}`,
+      content: "✅ Đã thêm key",
       ephemeral: true
     });
   }
 });
 
+// ====================
+// WEBHOOK SEPAY
+// ====================
 app.post("/webhook", (req, res) => {
-  try {
 
-    const description =
-      req.body.content ||
-      req.body.description ||
-      req.body.transferContent;
+  const description =
+    req.body.content ||
+    req.body.description ||
+    req.body.transferContent;
 
-    const amount =
-      req.body.transferAmount ||
-      req.body.amount;
+  const amount =
+    req.body.transferAmount ||
+    req.body.amount;
 
-    if (!description || !amount)
-      return res.sendStatus(200);
+  if (!description || !amount)
+    return res.sendStatus(200);
 
-    const matchedCode = Object.keys(pendingDeposits)
-      .find(code => description.includes(code));
+  const matchedCode = Object.keys(pendingDeposits)
+    .find(code => description.includes(code));
 
-    if (!matchedCode)
-      return res.sendStatus(200);
+  if (!matchedCode)
+    return res.sendStatus(200);
 
-    const userId = pendingDeposits[matchedCode];
+  const userId = pendingDeposits[matchedCode];
 
-    balances[userId] += Number(amount);
+  balances[userId] += Number(amount);
 
-    delete pendingDeposits[matchedCode];
+  delete pendingDeposits[matchedCode];
+  saveBalances();
 
-    saveBalances();
+  console.log(`+${amount} cho ${userId}`);
 
-    console.log(`+${amount} cho ${userId}`);
-
-    res.sendStatus(200);
-
-  } catch (err) {
-    console.log("Webhook lỗi:", err);
-    res.sendStatus(500);
-  }
+  res.sendStatus(200);
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Server running");
-});
-
+app.listen(process.env.PORT || 3000);
 client.login(process.env.TOKEN);
