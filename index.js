@@ -14,10 +14,9 @@ const {
 } = require("discord.js");
 
 const express = require("express");
-const bodyParser = require("body-parser");
 const fs = require("fs");
 
-// ================= DATABASE FILE =================
+// ================= SAFE FILE INIT =================
 
 if (!fs.existsSync("./balances.json"))
   fs.writeFileSync("./balances.json", "{}");
@@ -38,7 +37,7 @@ const products = [
   { id: "ipa_month", name: "Key IPA - Tháng", price: 120000 }
 ];
 
-// ================= DISCORD CLIENT =================
+// ================= DISCORD =================
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
@@ -48,218 +47,187 @@ client.once("ready", () => {
   console.log(`✅ Bot online: ${client.user.tag}`);
 });
 
-// ================= SLASH COMMAND DEPLOY =================
+// ================= SLASH COMMAND =================
 
 const commands = [
   new SlashCommandBuilder().setName("shop").setDescription("Mở shop"),
-  new SlashCommandBuilder().setName("admin").setDescription("Admin panel"),
-
   new SlashCommandBuilder()
     .setName("addkey")
     .setDescription("Thêm key")
-    .addStringOption(o => o.setName("type").setRequired(true).setDescription("ipa_day / ipa_week / ipa_month"))
-    .addStringOption(o => o.setName("keys").setRequired(true).setDescription("key1,key2")),
-
-  new SlashCommandBuilder()
-    .setName("addmoney")
-    .setDescription("Cộng tiền user")
-    .addStringOption(o => o.setName("userid").setRequired(true))
-    .addIntegerOption(o => o.setName("amount").setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName("balance")
-    .setDescription("Xem số dư user")
-    .addStringOption(o => o.setName("userid").setRequired(true))
+    .addStringOption(o => o.setName("type").setRequired(true))
+    .addStringOption(o => o.setName("keys").setRequired(true))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
 (async () => {
-  await rest.put(
-    Routes.applicationGuildCommands(
-      process.env.CLIENT_ID,
-      process.env.GUILD_ID
-    ),
-    { body: commands }
-  );
-  console.log("✅ Slash commands deployed");
+  try {
+    await rest.put(
+      Routes.applicationGuildCommands(
+        process.env.CLIENT_ID,
+        process.env.GUILD_ID
+      ),
+      { body: commands }
+    );
+    console.log("✅ Slash deployed");
+  } catch (err) {
+    console.log("❌ Deploy lỗi:", err);
+  }
 })();
 
-// ================= SEPAY WEBHOOK =================
+// ================= WEBHOOK =================
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
 app.post("/webhook", (req, res) => {
+  try {
+    const data = req.body;
 
-  const data = req.body;
+    const userId = data.content;
+    const amount = Number(data.transferAmount);
 
-  const userId = data.content; // nội dung chuyển khoản = ID Discord
-  const amount = Number(data.transferAmount);
+    if (!userId || !amount) return res.sendStatus(400);
 
-  if (!userId || !amount) return res.sendStatus(400);
+    if (!balances[userId]) balances[userId] = 0;
 
-  if (!balances[userId]) balances[userId] = 0;
+    balances[userId] += amount;
 
-  balances[userId] += amount;
+    fs.writeFileSync("./balances.json", JSON.stringify(balances, null, 2));
 
-  fs.writeFileSync("./balances.json", JSON.stringify(balances, null, 2));
+    console.log(`💰 +${amount} cho ${userId}`);
 
-  console.log(`💰 Cộng ${amount} cho ${userId}`);
+    res.sendStatus(200);
 
-  res.sendStatus(200);
+  } catch (err) {
+    console.log("Webhook lỗi:", err);
+    res.sendStatus(500);
+  }
 });
 
 app.listen(process.env.PORT || 3000, () =>
-  console.log("🌐 Webhook đang chạy")
+  console.log("🌐 Webhook running")
 );
 
-// ================= INTERACTION =================
+// ================= BOT LOGIC =================
 
 client.on(Events.InteractionCreate, async interaction => {
 
-  // ================= SHOP =================
-  if (interaction.isChatInputCommand()) {
+  try {
 
-    if (interaction.commandName === "shop") {
+    if (interaction.isChatInputCommand()) {
 
-      const embed = new EmbedBuilder()
-        .setTitle("🛒 SHOP KEY IPA")
-        .setColor("Purple");
+      if (interaction.commandName === "shop") {
 
-      products.forEach(p => {
-        embed.addFields({
-          name: p.name,
-          value: `💰 ${p.price} VNĐ`
+        const embed = new EmbedBuilder()
+          .setTitle("🛒 SHOP KEY IPA")
+          .setColor("Purple");
+
+        products.forEach(p => {
+          embed.addFields({
+            name: p.name,
+            value: `💰 ${p.price} VNĐ`
+          });
         });
-      });
 
-      const select = new StringSelectMenuBuilder()
-        .setCustomId("buy_key")
-        .setPlaceholder("Chọn gói key...")
-        .addOptions(products.map(p => ({
-          label: p.name,
-          value: p.id
-        })));
+        const select = new StringSelectMenuBuilder()
+          .setCustomId("buy")
+          .setPlaceholder("Chọn gói...")
+          .addOptions(products.map(p => ({
+            label: p.name,
+            value: p.id
+          })));
 
-      const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("nap_tien").setLabel("Nạp tiền").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("so_du").setLabel("Số dư").setStyle(ButtonStyle.Primary)
-      );
+        const buttons = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("nap")
+            .setLabel("Nạp tiền")
+            .setStyle(ButtonStyle.Success),
 
-      await interaction.reply({
-        embeds: [embed],
-        components: [
-          new ActionRowBuilder().addComponents(select),
-          buttons
-        ]
-      });
+          new ButtonBuilder()
+            .setCustomId("balance")
+            .setLabel("Số dư")
+            .setStyle(ButtonStyle.Primary)
+        );
+
+        await interaction.reply({
+          embeds: [embed],
+          components: [
+            new ActionRowBuilder().addComponents(select),
+            buttons
+          ]
+        });
+      }
+
+      if (interaction.commandName === "addkey") {
+
+        const type = interaction.options.getString("type");
+        const keyInput = interaction.options.getString("keys");
+
+        const newKeys = keyInput.split(",");
+
+        if (!keys[type]) keys[type] = [];
+
+        keys[type].push(...newKeys);
+
+        fs.writeFileSync("./keys.json", JSON.stringify(keys, null, 2));
+
+        await interaction.reply({ content: "✅ Đã thêm key", ephemeral: true });
+      }
     }
 
-    // ================= ADMIN =================
-    if (interaction.commandName === "admin") {
+    // BUTTON
+    if (interaction.isButton()) {
 
-      if (interaction.user.id !== process.env.ADMIN_ID)
-        return interaction.reply({ content: "❌ Không phải admin", ephemeral: true });
+      if (interaction.customId === "nap") {
+        await interaction.reply({
+          content: `🏦 Quét QR bên dưới
 
-      await interaction.reply({
-        content: "🔐 ADMIN PANEL\n/addkey\n/addmoney\n/balance",
-        ephemeral: true
-      });
+📌 Nội dung bắt buộc:
+${interaction.user.id}
+
+💰 Chuyển bao nhiêu cũng được`,
+          files: ["./qr.png"],
+          ephemeral: true
+        });
+      }
+
+      if (interaction.customId === "balance") {
+        const bal = balances[interaction.user.id] || 0;
+        await interaction.reply({
+          content: `💰 Số dư: ${bal} VNĐ`,
+          ephemeral: true
+        });
+      }
     }
 
-    // ADD KEY
-    if (interaction.commandName === "addkey") {
+    // BUY
+    if (interaction.isStringSelectMenu()) {
 
-      if (interaction.user.id !== process.env.ADMIN_ID)
-        return interaction.reply({ content: "❌ Không phải admin", ephemeral: true });
+      const product = products.find(p => p.id === interaction.values[0]);
+      const bal = balances[interaction.user.id] || 0;
 
-      const type = interaction.options.getString("type");
-      const keyInput = interaction.options.getString("keys");
-      const newKeys = keyInput.split(",");
+      if (bal < product.price)
+        return interaction.reply({ content: "❌ Không đủ tiền", ephemeral: true });
 
-      if (!keys[type]) keys[type] = [];
+      if (!keys[product.id] || keys[product.id].length === 0)
+        return interaction.reply({ content: "❌ Hết key", ephemeral: true });
 
-      keys[type].push(...newKeys);
-
-      fs.writeFileSync("./keys.json", JSON.stringify(keys, null, 2));
-
-      await interaction.reply({ content: "✅ Đã thêm key", ephemeral: true });
-    }
-
-    // ADD MONEY
-    if (interaction.commandName === "addmoney") {
-
-      if (interaction.user.id !== process.env.ADMIN_ID)
-        return interaction.reply({ content: "❌ Không phải admin", ephemeral: true });
-
-      const userId = interaction.options.getString("userid");
-      const amount = interaction.options.getInteger("amount");
-
-      if (!balances[userId]) balances[userId] = 0;
-      balances[userId] += amount;
+      const key = keys[product.id].shift();
+      balances[interaction.user.id] -= product.price;
 
       fs.writeFileSync("./balances.json", JSON.stringify(balances, null, 2));
+      fs.writeFileSync("./keys.json", JSON.stringify(keys, null, 2));
 
-      await interaction.reply({ content: "✅ Đã cộng tiền", ephemeral: true });
-    }
-
-    // CHECK BALANCE
-    if (interaction.commandName === "balance") {
-
-      if (interaction.user.id !== process.env.ADMIN_ID)
-        return interaction.reply({ content: "❌ Không phải admin", ephemeral: true });
-
-      const userId = interaction.options.getString("userid");
-      const bal = balances[userId] || 0;
-
-      await interaction.reply({ content: `💰 ${bal} VNĐ`, ephemeral: true });
-    }
-  }
-
-  // ================= BUTTON =================
-
-  if (interaction.isButton()) {
-
-    if (interaction.customId === "nap_tien") {
       await interaction.reply({
-        content: `🏦 Chuyển khoản nội dung:\n${interaction.user.id}\nBot tự cộng tiền sau vài giây.`,
+        content: `✅ Mua thành công\n🔑 Key:\n\`${key}\``,
         ephemeral: true
       });
     }
 
-    if (interaction.customId === "so_du") {
-      const bal = balances[interaction.user.id] || 0;
-      await interaction.reply({ content: `💰 ${bal} VNĐ`, ephemeral: true });
-    }
+  } catch (err) {
+    console.log("Bot lỗi:", err);
   }
-
-  // ================= BUY KEY =================
-
-  if (interaction.isStringSelectMenu()) {
-
-    const product = products.find(p => p.id === interaction.values[0]);
-    const bal = balances[interaction.user.id] || 0;
-
-    if (bal < product.price)
-      return interaction.reply({ content: "❌ Không đủ tiền", ephemeral: true });
-
-    if (!keys[product.id] || keys[product.id].length === 0)
-      return interaction.reply({ content: "❌ Hết key", ephemeral: true });
-
-    const key = keys[product.id].shift();
-
-    balances[interaction.user.id] -= product.price;
-
-    fs.writeFileSync("./balances.json", JSON.stringify(balances, null, 2));
-    fs.writeFileSync("./keys.json", JSON.stringify(keys, null, 2));
-
-    await interaction.reply({
-      content: `✅ Mua thành công\n🔑 Key:\n\`${key}\``,
-      ephemeral: true
-    });
-  }
-
 });
 
 client.login(process.env.TOKEN);
