@@ -9,6 +9,9 @@ const {
   ButtonStyle,
   StringSelectMenuBuilder,
   EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   PermissionsBitField
 } = require("discord.js");
 
@@ -40,25 +43,19 @@ function saveKeys() {
 
 function createEmbed() {
   return new EmbedBuilder()
-    .setTitle("🛒 ShopIPA Key - Auto Buy")
+    .setTitle("🛒 IPA Shop")
     .setDescription(
-      `🔥 **Danh Sách Key IPA QK**\n\n` +
-      `📅 **Key Ngày (15K)**\n` +
-      `Kho còn: ${keys.day.length} key\n\n` +
-      `📆 **Key Tuần (70K)**\n` +
-      `Kho còn: ${keys.week.length} key\n\n` +
-      `🗓 **Key Tháng (120K)**\n` +
-      `Kho còn: ${keys.month.length} key\n\n` +
-      `Chọn danh mục bên dưới để mua`
+      `📅 Gói Ngày (15K)\nKho: ${keys.day.length}\n\n` +
+      `📆 Gói Tuần (70K)\nKho: ${keys.week.length}\n\n` +
+      `🗓 Gói Tháng (120K)\nKho: ${keys.month.length}`
     )
     .setColor("#5865F2");
 }
 
 function createComponents() {
-
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId("select_buy")
-    .setPlaceholder("📌 Chọn danh mục...")
+    .setPlaceholder("Chọn gói cần mua")
     .addOptions([
       { label: "Gói Ngày (15K)", value: "day" },
       { label: "Gói Tuần (70K)", value: "week" },
@@ -72,7 +69,6 @@ function createComponents() {
       .setCustomId("nap")
       .setLabel("💰 Nạp tiền")
       .setStyle(ButtonStyle.Success),
-
     new ButtonBuilder()
       .setCustomId("balance")
       .setLabel("💵 Số dư")
@@ -82,17 +78,15 @@ function createComponents() {
   const row3 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("add_day")
-      .setLabel("➕ Add Key Ngày")
+      .setLabel("➕ Add Day")
       .setStyle(ButtonStyle.Secondary),
-
     new ButtonBuilder()
       .setCustomId("add_week")
-      .setLabel("➕ Add Key Tuần")
+      .setLabel("➕ Add Week")
       .setStyle(ButtonStyle.Secondary),
-
     new ButtonBuilder()
       .setCustomId("add_month")
-      .setLabel("➕ Add Key Tháng")
+      .setLabel("➕ Add Month")
       .setStyle(ButtonStyle.Secondary)
   );
 
@@ -125,30 +119,18 @@ client.on("interactionCreate", async interaction => {
   const userId = interaction.user.id;
   if (!balances[userId]) balances[userId] = 0;
 
-  // ======================
+  // ====================
   // MUA KEY
-  // ======================
+  // ====================
   if (interaction.isStringSelectMenu()) {
-
     const type = interaction.values[0];
-
-    const prices = {
-      day: 15000,
-      week: 70000,
-      month: 120000
-    };
+    const prices = { day: 15000, week: 70000, month: 120000 };
 
     if (balances[userId] < prices[type])
-      return interaction.reply({
-        content: "❌ Không đủ tiền",
-        ephemeral: true
-      });
+      return interaction.reply({ content: "❌ Không đủ tiền", ephemeral: true });
 
     if (keys[type].length === 0)
-      return interaction.reply({
-        content: "❌ Hết key",
-        ephemeral: true
-      });
+      return interaction.reply({ content: "❌ Hết key", ephemeral: true });
 
     const key = keys[type].shift();
     balances[userId] -= prices[type];
@@ -163,32 +145,28 @@ client.on("interactionCreate", async interaction => {
     });
   }
 
-  // ======================
+  // ====================
   // BUTTON
-  // ======================
+  // ====================
   if (interaction.isButton()) {
 
-    // ===== NẠP =====
+    // ===== MỞ FORM NẠP =====
     if (interaction.customId === "nap") {
 
-      const amount = 20000; // tiền mặc định
-      const code = `NAP_${userId}_${Date.now()}`;
+      const modal = new ModalBuilder()
+        .setCustomId("nap_modal")
+        .setTitle("Nhập số tiền muốn nạp");
 
-      pendingDeposits[code] = userId;
+      const amountInput = new TextInputBuilder()
+        .setCustomId("amount_input")
+        .setLabel("Nhập số tiền (VNĐ)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
 
-      const qrLink =
-        `https://qr.sepay.vn/img?bank=${process.env.BANK}` +
-        `&acc=${process.env.ACC}` +
-        `&amount=${amount}` +
-        `&des=${code}`;
+      const row = new ActionRowBuilder().addComponents(amountInput);
+      modal.addComponents(row);
 
-      return interaction.reply({
-        content:
-          `💳 Quét QR để nạp ${amount} VNĐ\n\n` +
-          `${qrLink}\n\n` +
-          `📌 Nội dung: ${code}`,
-        ephemeral: true
-      });
+      return interaction.showModal(modal);
     }
 
     // ===== XEM SỐ DƯ =====
@@ -202,31 +180,64 @@ client.on("interactionCreate", async interaction => {
     // ===== ADD KEY ADMIN =====
     if (interaction.customId.startsWith("add_")) {
 
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator))
+      const adminList = process.env.ADMIN_IDS.split(",");
+      if (!adminList.includes(userId))
         return interaction.reply({
-          content: "❌ Bạn không phải admin",
+          content: "❌ Không phải admin",
           ephemeral: true
         });
 
       const type = interaction.customId.split("_")[1];
-
       const newKey = "KEY-" + Date.now();
-      keys[type].push(newKey);
 
+      keys[type].push(newKey);
       saveKeys();
       await sendOrUpdatePanel();
 
       return interaction.reply({
-        content: `✅ Đã thêm 1 key ${type}`,
+        content: "✅ Đã thêm key",
+        ephemeral: true
+      });
+    }
+  }
+
+  // ====================
+  // SUBMIT MODAL
+  // ====================
+  if (interaction.isModalSubmit()) {
+
+    if (interaction.customId === "nap_modal") {
+
+      const amount = interaction.fields.getTextInputValue("amount_input");
+
+      if (isNaN(amount) || Number(amount) < 1000)
+        return interaction.reply({
+          content: "❌ Số tiền không hợp lệ",
+          ephemeral: true
+        });
+
+      const code = `NAP_${userId}_${Date.now()}`;
+      pendingDeposits[code] = userId;
+
+      const qrLink =
+        `https://qr.sepay.vn/img?bank=${process.env.BANK}` +
+        `&acc=${process.env.ACC}` +
+        `&amount=${amount}` +
+        `&des=${code}`;
+
+      return interaction.reply({
+        content:
+          `💳 Quét QR để nạp ${amount} VNĐ\n\n${qrLink}\n\n` +
+          `📌 Nội dung: ${code}`,
         ephemeral: true
       });
     }
   }
 });
 
-// ======================
-// WEBHOOK SEPAY
-// ======================
+// ====================
+// WEBHOOK
+// ====================
 app.post("/webhook", async (req, res) => {
 
   const description =
