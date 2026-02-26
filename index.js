@@ -16,10 +16,14 @@ const client = new Client({
 const app = express();
 app.use(express.json());
 
-let balances = JSON.parse(fs.readFileSync("./balances.json"));
-let keys = JSON.parse(fs.readFileSync("./keys.json"));
+let balances = fs.existsSync("./balances.json")
+  ? JSON.parse(fs.readFileSync("./balances.json"))
+  : {};
 
-// ✅ THÊM BIẾN LƯU MÃ NẠP
+let keys = fs.existsSync("./keys.json")
+  ? JSON.parse(fs.readFileSync("./keys.json"))
+  : { day: [], week: [], month: [] };
+
 let pendingDeposits = {};
 
 const QR_IMAGE = "https://cdn.discordapp.com/attachments/1424762608694853809/1476458474824011898/IMG_1858.jpg";
@@ -46,41 +50,56 @@ function createPanel() {
 
     new ButtonBuilder()
       .setCustomId("buy_day")
-      .setLabel(`📅 Ngày (15K)`)
+      .setLabel("📅 Ngày (15K)")
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId("buy_week")
-      .setLabel(`📆 Tuần (70K)`)
+      .setLabel("📆 Tuần (70K)")
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId("buy_month")
-      .setLabel(`🗓 Tháng (120K)`)
+      .setLabel("🗓 Tháng (120K)")
       .setStyle(ButtonStyle.Secondary)
   );
 }
 
 client.once("ready", async () => {
   console.log("Bot ready");
+
+  try {
+    const channel = await client.channels.fetch(process.env.CHANNEL_ID);
+    if (!channel) return console.log("Không tìm thấy channel");
+
+    // 🛑 XÓA PANEL CŨ (tránh spam khi restart)
+    const messages = await channel.messages.fetch({ limit: 10 });
+    const botPanel = messages.find(
+      m => m.author.id === client.user.id && m.content.includes("PANEL MUA KEY")
+    );
+    if (botPanel) await botPanel.delete();
+
+    await channel.send({
+      content: "🎯 PANEL MUA KEY IPA",
+      files: [QR_IMAGE],
+      components: [createPanel()]
+    });
+
+  } catch (err) {
+    console.log("Lỗi gửi panel:", err);
+  }
 });
 
 client.on("interactionCreate", async interaction => {
   if (!interaction.isButton()) return;
 
   const userId = interaction.user.id;
-
   if (!balances[userId]) balances[userId] = 0;
 
-  // ===============================
-  // 💰 NẠP TIỀN (ĐÃ SỬA TỰ LẤY ID)
-  // ===============================
   if (interaction.customId === "nap") {
 
     const depositCode =
-      "NAP" +
-      userId.slice(-5) +
-      Math.floor(Math.random() * 100);
+      "NAP" + userId.slice(-5) + Math.floor(Math.random() * 100);
 
     pendingDeposits[depositCode] = userId;
 
@@ -107,6 +126,7 @@ client.on("interactionCreate", async interaction => {
   };
 
   if (prices[interaction.customId]) {
+
     const type = interaction.customId.split("_")[1];
 
     if (balances[userId] < prices[interaction.customId]) {
@@ -136,13 +156,8 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-// ===============================
-// 🔔 WEBHOOK SEPAY
-// ===============================
 app.post("/webhook", (req, res) => {
   try {
-
-    console.log("Webhook:", req.body);
 
     const description =
       req.body.content ||
@@ -170,7 +185,7 @@ app.post("/webhook", (req, res) => {
 
     saveBalances();
 
-    console.log(`💰 +${amount} cho ${userId}`);
+    console.log(`+${amount} cho ${userId}`);
 
     res.sendStatus(200);
 
