@@ -7,9 +7,8 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle
+  StringSelectMenuBuilder,
+  EmbedBuilder
 } = require("discord.js");
 
 const client = new Client({
@@ -28,7 +27,7 @@ let keys = fs.existsSync("./keys.json")
   : { day: [], week: [], month: [] };
 
 let pendingDeposits = {};
-let panelMessage = null;
+let panelMessage;
 
 const QR_IMAGE = "https://cdn.discordapp.com/attachments/1424762608694853809/1476463256519442452/IMG_1910.png?ex=69a1370f&is=699fe58f&hm=853e9d763f078b2b17867b5d2aa84bc75e213f1b2ff387bfffa7a5acf34089f3&";
 
@@ -40,8 +39,37 @@ function saveKeys() {
   fs.writeFileSync("./keys.json", JSON.stringify(keys, null, 2));
 }
 
-function createUserPanel() {
-  return new ActionRowBuilder().addComponents(
+function createEmbed() {
+  return new EmbedBuilder()
+    .setTitle("🛒 ShopClone - Auto Buy")
+    .setDescription(
+      `🔥 **Danh mục đang bán**\n\n` +
+      `📅 **Gói Ngày**\n` +
+      `Kho còn: ${keys.day.length} key\n\n` +
+      `📆 **Gói Tuần**\n` +
+      `Kho còn: ${keys.week.length} key\n\n` +
+      `🗓 **Gói Tháng**\n` +
+      `Kho còn: ${keys.month.length} key\n\n` +
+      `Vui lòng chọn danh mục bên dưới để tiếp tục`
+    )
+    .setImage(QR_IMAGE)
+    .setColor("#5865F2");
+}
+
+function createComponents() {
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId("select_buy")
+    .setPlaceholder("📌 Chọn danh mục...")
+    .addOptions([
+      { label: "Gói Ngày (15K)", value: "day" },
+      { label: "Gói Tuần (70K)", value: "week" },
+      { label: "Gói Tháng (120K)", value: "month" }
+    ]);
+
+  const row1 = new ActionRowBuilder().addComponents(selectMenu);
+
+  const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("nap")
       .setLabel("💰 Nạp tiền")
@@ -49,65 +77,25 @@ function createUserPanel() {
 
     new ButtonBuilder()
       .setCustomId("balance")
-      .setLabel("💳 Số dư")
-      .setStyle(ButtonStyle.Primary),
-
-    new ButtonBuilder()
-      .setCustomId("buy_day")
-      .setLabel(`📅 Ngày (15K) [${keys.day.length}]`)
-      .setStyle(ButtonStyle.Secondary),
-
-    new ButtonBuilder()
-      .setCustomId("buy_week")
-      .setLabel(`📆 Tuần (70K) [${keys.week.length}]`)
-      .setStyle(ButtonStyle.Secondary),
-
-    new ButtonBuilder()
-      .setCustomId("buy_month")
-      .setLabel(`🗓 Tháng (120K) [${keys.month.length}]`)
-      .setStyle(ButtonStyle.Secondary)
+      .setLabel("💵 Số dư")
+      .setStyle(ButtonStyle.Primary)
   );
-}
 
-function createAdminPanel() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("add_day")
-      .setLabel("➕ Add Day")
-      .setStyle(ButtonStyle.Danger),
-
-    new ButtonBuilder()
-      .setCustomId("add_week")
-      .setLabel("➕ Add Week")
-      .setStyle(ButtonStyle.Danger),
-
-    new ButtonBuilder()
-      .setCustomId("add_month")
-      .setLabel("➕ Add Month")
-      .setStyle(ButtonStyle.Danger)
-  );
+  return [row1, row2];
 }
 
 async function sendOrUpdatePanel() {
   const channel = await client.channels.fetch(process.env.CHANNEL_ID);
-  if (!channel) return;
 
   if (!panelMessage) {
     panelMessage = await channel.send({
-      content: "🎯 PANEL MUA KEY IPA",
-      files: [QR_IMAGE],
-      components: [
-        createUserPanel(),
-        createAdminPanel()
-      ]
+      embeds: [createEmbed()],
+      components: createComponents()
     });
   } else {
     await panelMessage.edit({
-      content: "🎯 PANEL MUA KEY IPA",
-      components: [
-        createUserPanel(),
-        createAdminPanel()
-      ]
+      embeds: [createEmbed()],
+      components: createComponents()
     });
   }
 }
@@ -119,14 +107,52 @@ client.once("ready", async () => {
 
 client.on("interactionCreate", async interaction => {
 
+  const userId = interaction.user.id;
+  if (!balances[userId]) balances[userId] = 0;
+
+  // ======================
+  // SELECT MUA
+  // ======================
+  if (interaction.isStringSelectMenu()) {
+
+    const type = interaction.values[0];
+
+    const prices = {
+      day: 15000,
+      week: 70000,
+      month: 120000
+    };
+
+    if (balances[userId] < prices[type])
+      return interaction.reply({
+        content: "❌ Không đủ tiền",
+        ephemeral: true
+      });
+
+    if (keys[type].length === 0)
+      return interaction.reply({
+        content: "❌ Hết key",
+        ephemeral: true
+      });
+
+    const key = keys[type].shift();
+    balances[userId] -= prices[type];
+
+    saveBalances();
+    saveKeys();
+    await sendOrUpdatePanel();
+
+    return interaction.reply({
+      content: `✅ Mua thành công\n🔑 ${key}`,
+      ephemeral: true
+    });
+  }
+
+  // ======================
+  // NẠP TIỀN
+  // ======================
   if (interaction.isButton()) {
 
-    const userId = interaction.user.id;
-    if (!balances[userId]) balances[userId] = 0;
-
-    // ====================
-    // NẠP TIỀN
-    // ====================
     if (interaction.customId === "nap") {
 
       const code =
@@ -138,114 +164,26 @@ client.on("interactionCreate", async interaction => {
 
       return interaction.reply({
         content:
-          `🏦 Quét QR để nạp tiền\n\n` +
+          `🏦 Quét QR bên trên để nạp\n\n` +
           `📌 Nội dung chuyển khoản:\n${code}\n\n` +
-          `⚠ Ghi đúng nội dung để được cộng tiền.`,
+          `Sau khi chuyển tiền sẽ tự động cộng.`,
         ephemeral: true
       });
     }
 
     if (interaction.customId === "balance") {
       return interaction.reply({
-        content: `💳 Số dư: ${balances[userId]} VNĐ`,
+        content: `💵 Số dư: ${balances[userId]} VNĐ`,
         ephemeral: true
       });
     }
-
-    // ====================
-    // MUA KEY
-    // ====================
-    const prices = {
-      buy_day: 15000,
-      buy_week: 70000,
-      buy_month: 120000
-    };
-
-    if (prices[interaction.customId]) {
-
-      const type = interaction.customId.split("_")[1];
-
-      if (balances[userId] < prices[interaction.customId]) {
-        return interaction.reply({
-          content: "❌ Không đủ tiền",
-          ephemeral: true
-        });
-      }
-
-      if (keys[type].length === 0) {
-        return interaction.reply({
-          content: "❌ Hết key",
-          ephemeral: true
-        });
-      }
-
-      const key = keys[type].shift();
-      balances[userId] -= prices[interaction.customId];
-
-      saveBalances();
-      saveKeys();
-      await sendOrUpdatePanel();
-
-      return interaction.reply({
-        content: `✅ Mua thành công\n🔑 ${key}`,
-        ephemeral: true
-      });
-    }
-
-    // ====================
-    // ADMIN ADD KEY
-    // ====================
-    if (interaction.user.id !== process.env.ADMIN_ID)
-      return interaction.reply({ content: "Không có quyền", ephemeral: true });
-
-    if (interaction.customId.startsWith("add_")) {
-
-      const type = interaction.customId.split("_")[1];
-
-      const modal = new ModalBuilder()
-        .setCustomId(`modal_${type}`)
-        .setTitle("Nhập Key");
-
-      const input = new TextInputBuilder()
-        .setCustomId("key_input")
-        .setLabel("Nhập key cần thêm")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(input)
-      );
-
-      return interaction.showModal(modal);
-    }
-  }
-
-  // ====================
-  // XỬ LÝ MODAL ADD KEY
-  // ====================
-  if (interaction.isModalSubmit()) {
-
-    if (interaction.user.id !== process.env.ADMIN_ID)
-      return interaction.reply({ content: "Không có quyền", ephemeral: true });
-
-    const type = interaction.customId.split("_")[1];
-    const key = interaction.fields.getTextInputValue("key_input");
-
-    keys[type].push(key);
-    saveKeys();
-    await sendOrUpdatePanel();
-
-    return interaction.reply({
-      content: "✅ Đã thêm key",
-      ephemeral: true
-    });
   }
 });
 
-// ====================
+// ======================
 // WEBHOOK SEPAY
-// ====================
-app.post("/webhook", (req, res) => {
+// ======================
+app.post("/webhook", async (req, res) => {
 
   const description =
     req.body.content ||
@@ -268,11 +206,14 @@ app.post("/webhook", (req, res) => {
   const userId = pendingDeposits[matchedCode];
 
   balances[userId] += Number(amount);
-
   delete pendingDeposits[matchedCode];
+
   saveBalances();
 
-  console.log(`+${amount} cho ${userId}`);
+  try {
+    const user = await client.users.fetch(userId);
+    await user.send(`✅ Nạp thành công +${amount} VNĐ`);
+  } catch {}
 
   res.sendStatus(200);
 });
