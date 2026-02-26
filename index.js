@@ -40,14 +40,14 @@ function saveKeys() {
 
 function createEmbed() {
   return new EmbedBuilder()
-    .setTitle("🛒 ShopClone - Auto Buy")
+    .setTitle("🛒 ShopIPA Key - Auto Buy")
     .setDescription(
-      `🔥 **Danh mục đang bán**\n\n` +
-      `📅 **Gói Ngày (15K)**\n` +
+      `🔥 **Danh Sách Key IPA QK**\n\n` +
+      `📅 **Key Ngày (15K)**\n` +
       `Kho còn: ${keys.day.length} key\n\n` +
-      `📆 **Gói Tuần (70K)**\n` +
+      `📆 **Key Tuần (70K)**\n` +
       `Kho còn: ${keys.week.length} key\n\n` +
-      `🗓 **Gói Tháng (120K)**\n` +
+      `🗓 **Key Tháng (120K)**\n` +
       `Kho còn: ${keys.month.length} key\n\n` +
       `Chọn danh mục bên dưới để mua`
     )
