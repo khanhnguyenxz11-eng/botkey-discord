@@ -1,7 +1,6 @@
 {
-  "name": "discord-bot-ipa",
+  "name": "ipa-bot",
   "version": "1.0.0",
-  "description": "Bot ban key IPA + SePay",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
