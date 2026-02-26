@@ -8,7 +8,8 @@ const {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
-  EmbedBuilder
+  EmbedBuilder,
+  PermissionsBitField
 } = require("discord.js");
 
 const client = new Client({
@@ -29,8 +30,6 @@ let keys = fs.existsSync("./keys.json")
 let pendingDeposits = {};
 let panelMessage;
 
-const QR_IMAGE = "https://cdn.discordapp.com/attachments/1424762608694853809/1476463256519442452/IMG_1910.png?ex=69a1370f&is=699fe58f&hm=853e9d763f078b2b17867b5d2aa84bc75e213f1b2ff387bfffa7a5acf34089f3&";
-
 function saveBalances() {
   fs.writeFileSync("./balances.json", JSON.stringify(balances, null, 2));
 }
@@ -44,15 +43,14 @@ function createEmbed() {
     .setTitle("🛒 ShopClone - Auto Buy")
     .setDescription(
       `🔥 **Danh mục đang bán**\n\n` +
-      `📅 **Gói Ngày**\n` +
+      `📅 **Gói Ngày (15K)**\n` +
       `Kho còn: ${keys.day.length} key\n\n` +
-      `📆 **Gói Tuần**\n` +
+      `📆 **Gói Tuần (70K)**\n` +
       `Kho còn: ${keys.week.length} key\n\n` +
-      `🗓 **Gói Tháng**\n` +
+      `🗓 **Gói Tháng (120K)**\n` +
       `Kho còn: ${keys.month.length} key\n\n` +
-      `Vui lòng chọn danh mục bên dưới để tiếp tục`
+      `Chọn danh mục bên dưới để mua`
     )
-    .setImage(QR_IMAGE)
     .setColor("#5865F2");
 }
 
@@ -81,7 +79,24 @@ function createComponents() {
       .setStyle(ButtonStyle.Primary)
   );
 
-  return [row1, row2];
+  const row3 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("add_day")
+      .setLabel("➕ Add Key Ngày")
+      .setStyle(ButtonStyle.Secondary),
+
+    new ButtonBuilder()
+      .setCustomId("add_week")
+      .setLabel("➕ Add Key Tuần")
+      .setStyle(ButtonStyle.Secondary),
+
+    new ButtonBuilder()
+      .setCustomId("add_month")
+      .setLabel("➕ Add Key Tháng")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return [row1, row2, row3];
 }
 
 async function sendOrUpdatePanel() {
@@ -111,7 +126,7 @@ client.on("interactionCreate", async interaction => {
   if (!balances[userId]) balances[userId] = 0;
 
   // ======================
-  // SELECT MUA
+  // MUA KEY
   // ======================
   if (interaction.isStringSelectMenu()) {
 
@@ -149,31 +164,60 @@ client.on("interactionCreate", async interaction => {
   }
 
   // ======================
-  // NẠP TIỀN
+  // BUTTON
   // ======================
   if (interaction.isButton()) {
 
+    // ===== NẠP =====
     if (interaction.customId === "nap") {
 
-      const code =
-        "NAP" +
-        userId.slice(-5) +
-        Math.floor(Math.random() * 100);
+      const amount = 20000; // tiền mặc định
+      const code = `NAP_${userId}_${Date.now()}`;
 
       pendingDeposits[code] = userId;
 
+      const qrLink =
+        `https://qr.sepay.vn/img?bank=${process.env.BANK}` +
+        `&acc=${process.env.ACC}` +
+        `&amount=${amount}` +
+        `&des=${code}`;
+
       return interaction.reply({
         content:
-          `🏦 Quét QR bên trên để nạp\n\n` +
-          `📌 Nội dung chuyển khoản:\n${code}\n\n` +
-          `Sau khi chuyển tiền sẽ tự động cộng.`,
+          `💳 Quét QR để nạp ${amount} VNĐ\n\n` +
+          `${qrLink}\n\n` +
+          `📌 Nội dung: ${code}`,
         ephemeral: true
       });
     }
 
+    // ===== XEM SỐ DƯ =====
     if (interaction.customId === "balance") {
       return interaction.reply({
         content: `💵 Số dư: ${balances[userId]} VNĐ`,
+        ephemeral: true
+      });
+    }
+
+    // ===== ADD KEY ADMIN =====
+    if (interaction.customId.startsWith("add_")) {
+
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator))
+        return interaction.reply({
+          content: "❌ Bạn không phải admin",
+          ephemeral: true
+        });
+
+      const type = interaction.customId.split("_")[1];
+
+      const newKey = "KEY-" + Date.now();
+      keys[type].push(newKey);
+
+      saveKeys();
+      await sendOrUpdatePanel();
+
+      return interaction.reply({
+        content: `✅ Đã thêm 1 key ${type}`,
         ephemeral: true
       });
     }
