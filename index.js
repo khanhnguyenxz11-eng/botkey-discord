@@ -13,7 +13,7 @@ const {
 const express = require("express");
 const fs = require("fs");
 
-// ================= SAFE FILE INIT =================
+// ================= FILE INIT =================
 
 if (!fs.existsSync("./balances.json"))
   fs.writeFileSync("./balances.json", "{}");
@@ -37,10 +37,14 @@ const products = [
 // ================= DISCORD =================
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-client.once("ready", async () => {
+client.once("ready", () => {
   console.log(`✅ Bot online: ${client.user.tag}`);
 });
 
@@ -57,129 +61,132 @@ app.post("/webhook", (req, res) => {
     if (!userId || !amount) return res.sendStatus(400);
 
     if (!balances[userId]) balances[userId] = 0;
-
     balances[userId] += amount;
 
     fs.writeFileSync("./balances.json", JSON.stringify(balances, null, 2));
 
     console.log(`💰 +${amount} cho ${userId}`);
-
     res.sendStatus(200);
 
-  } catch (err) {
-    console.log("Webhook lỗi:", err);
+  } catch {
     res.sendStatus(500);
   }
 });
 
-app.listen(process.env.PORT || 3000, () =>
-  console.log("🌐 Webhook running")
-);
+app.listen(process.env.PORT || 3000);
 
-// ================= INTERACTION =================
+// ================= ADMIN COMMAND =================
+
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  if (message.author.id !== process.env.ADMIN_ID) return;
+
+  // ===== PANEL =====
+  if (message.content === "!panel") {
+
+    const select = new StringSelectMenuBuilder()
+      .setCustomId("buy_key")
+      .setPlaceholder("Chọn sản phẩm...")
+      .addOptions(products.map(p => ({
+        label: `${p.name} - ${p.price}đ`,
+        value: p.id
+      })));
+
+    const buttons = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("nap_tien")
+        .setLabel("Nạp tiền")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId("so_du")
+        .setLabel("Số dư")
+        .setStyle(ButtonStyle.Primary)
+    );
+
+    message.channel.send({
+      content: "🛒 SHOP KEY IPA",
+      components: [
+        new ActionRowBuilder().addComponents(select),
+        buttons
+      ]
+    });
+  }
+
+  // ===== ADD KEY =====
+  if (message.content.startsWith("!addkey")) {
+    const args = message.content.split(" ");
+    const type = args[1];
+    const key = args.slice(2).join(" ");
+
+    if (!keys[type]) return message.reply("❌ Sai loại key");
+
+    keys[type].push(key);
+    fs.writeFileSync("./keys.json", JSON.stringify(keys, null, 2));
+
+    message.reply("✅ Đã thêm key");
+  }
+
+  // ===== CHECK BALANCE =====
+  if (message.content.startsWith("!check")) {
+    const userId = message.content.split(" ")[1];
+    const bal = balances[userId] || 0;
+    message.reply(`💰 Số dư: ${bal} VNĐ`);
+  }
+});
+
+// ================= BUTTON =================
 
 client.on(Events.InteractionCreate, async interaction => {
 
-  try {
+  if (interaction.isButton()) {
 
-    // ================= BUTTON: MỞ SHOP =================
-    if (interaction.isButton() && interaction.customId === "open_shop") {
-
-      const embed = new EmbedBuilder()
-        .setTitle("🛒 SHOP KEY IPA")
-        .setColor("Purple");
-
-      products.forEach(p => {
-        embed.addFields({
-          name: p.name,
-          value: `💰 ${p.price} VNĐ`
-        });
-      });
-
-      const select = new StringSelectMenuBuilder()
-        .setCustomId("buy_key")
-        .setPlaceholder("Chọn gói key...")
-        .addOptions(products.map(p => ({
-          label: p.name,
-          value: p.id
-        })));
-
-      const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("nap_tien")
-          .setLabel("Nạp tiền")
-          .setStyle(ButtonStyle.Success),
-
-        new ButtonBuilder()
-          .setCustomId("so_du")
-          .setLabel("Số dư")
-          .setStyle(ButtonStyle.Primary)
-      );
-
+    // ===== NẠP TIỀN =====
+    if (interaction.customId === "nap_tien") {
       return interaction.reply({
-        embeds: [embed],
-        components: [
-          new ActionRowBuilder().addComponents(select),
-          buttons
-        ],
-        ephemeral: true
-      });
-    }
+        content: `🏦 Quét QR để nạp
 
-    // ================= NẠP TIỀN =================
-    if (interaction.isButton() && interaction.customId === "nap_tien") {
-
-      return interaction.reply({
-        content: `🏦 QUÉT QR ĐỂ NẠP TIỀN
-
-📌 Nội dung bắt buộc:
-${interaction.user.id}
-
-💰 Chuyển bao nhiêu cũng được.`,
+📌 Nội dung:
+${interaction.user.id}`,
         files: ["./qr.png"],
         ephemeral: true
       });
     }
 
-    // ================= SỐ DƯ =================
-    if (interaction.isButton() && interaction.customId === "so_du") {
-
+    // ===== SỐ DƯ =====
+    if (interaction.customId === "so_du") {
       const bal = balances[interaction.user.id] || 0;
-
       return interaction.reply({
-        content: `💰 Số dư: ${bal} VNĐ`,
+        content: `💰 Số dư của bạn: ${bal} VNĐ`,
         ephemeral: true
       });
     }
+  }
 
-    // ================= MUA KEY =================
-    if (interaction.isStringSelectMenu()) {
+  // ===== MUA KEY =====
+  if (interaction.isStringSelectMenu()) {
 
-      const product = products.find(p => p.id === interaction.values[0]);
-      const bal = balances[interaction.user.id] || 0;
+    const product = products.find(p => p.id === interaction.values[0]);
+    const bal = balances[interaction.user.id] || 0;
 
-      if (bal < product.price)
-        return interaction.reply({ content: "❌ Không đủ tiền", ephemeral: true });
+    if (bal < product.price)
+      return interaction.reply({ content: "❌ Không đủ tiền", ephemeral: true });
 
-      if (!keys[product.id] || keys[product.id].length === 0)
-        return interaction.reply({ content: "❌ Hết key", ephemeral: true });
+    if (!keys[product.id] || keys[product.id].length === 0)
+      return interaction.reply({ content: "❌ Hết key", ephemeral: true });
 
-      const key = keys[product.id].shift();
-      balances[interaction.user.id] -= product.price;
+    const key = keys[product.id].shift();
+    balances[interaction.user.id] -= product.price;
 
-      fs.writeFileSync("./balances.json", JSON.stringify(balances, null, 2));
-      fs.writeFileSync("./keys.json", JSON.stringify(keys, null, 2));
+    fs.writeFileSync("./balances.json", JSON.stringify(balances, null, 2));
+    fs.writeFileSync("./keys.json", JSON.stringify(keys, null, 2));
 
-      return interaction.reply({
-        content: `✅ Mua thành công\n🔑 Key của bạn:\n\`${key}\``,
-        ephemeral: true
-      });
-    }
-
-  } catch (err) {
-    console.log("Bot lỗi:", err);
+    return interaction.reply({
+      content: `✅ Mua thành công\n🔑 Key của bạn:\n\`${key}\``,
+      ephemeral: true
+    });
   }
 });
 
 // ================= LOGIN =================
+
 client.login(process.env.TOKEN);
