@@ -18,7 +18,7 @@ const {
 /* ================= INIT ================= */
 
 if (!process.env.TOKEN) {
-  console.error("❌ Missing TOKEN in ENV");
+  console.error("❌ Missing TOKEN");
   process.exit(1);
 }
 
@@ -28,6 +28,12 @@ const client = new Client({
 
 const app = express();
 app.use(express.json());
+
+/* ================= HEALTH CHECK ROUTE ================= */
+/* Railway sẽ ping route này */
+app.get("/", (req, res) => {
+  res.status(200).send("Bot is running ✅");
+});
 
 /* ================= FILE SAFE ================= */
 
@@ -120,8 +126,6 @@ async function updatePanel() {
     }
   } catch (err) {
     console.error("Panel error:", err);
-    panel.messageId = null;
-    save("./panel.json", panel);
   }
 }
 
@@ -138,7 +142,6 @@ client.on("interactionCreate", async (i) => {
   const userId = i.user.id;
   if (!balances[userId]) balances[userId] = 0;
 
-  /* ===== BUY ===== */
   if (i.isStringSelectMenu()) {
     const price = { day: 15000, week: 70000, month: 120000 };
     const type = i.values[0];
@@ -154,18 +157,15 @@ client.on("interactionCreate", async (i) => {
 
     save("./balances.json", balances);
     save("./keys.json", keys);
-
     await updatePanel();
 
     return i.reply({
-      content: `✅ Thành công\n🔑 ${key}\n💵 Còn: ${balances[userId].toLocaleString()} VNĐ`,
+      content: `✅ Thành công\n🔑 ${key}`,
       flags: MessageFlags.Ephemeral
     });
   }
 
-  /* ===== BUTTON ===== */
   if (i.isButton()) {
-
     if (i.customId === "balance")
       return i.reply({
         content: `💵 Số dư: ${balances[userId].toLocaleString()} VNĐ`,
@@ -186,71 +186,16 @@ client.on("interactionCreate", async (i) => {
       modal.addComponents(new ActionRowBuilder().addComponents(input));
       return i.showModal(modal);
     }
-
-    if (i.customId === "admin_add") {
-      const admins = (process.env.ADMIN_IDS || "").split(",");
-
-      if (!admins.includes(userId))
-        return i.reply({
-          content: "❌ Không phải admin",
-          flags: MessageFlags.Ephemeral
-        });
-
-      const modal = new ModalBuilder()
-        .setCustomId("admin_add_modal")
-        .setTitle("Thêm Key");
-
-      const typeInput = new TextInputBuilder()
-        .setCustomId("type")
-        .setLabel("Loại (day/week/month)")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const keyInput = new TextInputBuilder()
-        .setCustomId("keys")
-        .setLabel("Mỗi dòng 1 key")
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true);
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(typeInput),
-        new ActionRowBuilder().addComponents(keyInput)
-      );
-
-      return i.showModal(modal);
-    }
   }
 
-  /* ===== MODAL ===== */
   if (i.isModalSubmit()) {
-
-    if (i.customId === "admin_add_modal") {
-      const admins = (process.env.ADMIN_IDS || "").split(",");
-      if (!admins.includes(userId))
-        return i.reply({ content: "❌ Không phải admin", flags: MessageFlags.Ephemeral });
-
-      const type = i.fields.getTextInputValue("type").toLowerCase().trim();
-      const rawKeys = i.fields.getTextInputValue("keys");
-
-      if (!["day", "week", "month"].includes(type))
-        return i.reply({ content: "❌ Loại không hợp lệ", flags: MessageFlags.Ephemeral });
-
-      const list = rawKeys.split("\n").map(k => k.trim()).filter(Boolean);
-      keys[type].push(...list);
-
-      save("./keys.json", keys);
-      await updatePanel();
-
-      return i.reply({
-        content: `✅ Đã thêm ${list.length} key`,
-        flags: MessageFlags.Ephemeral
-      });
-    }
-
     if (i.customId === "nap_modal") {
       const amount = Number(i.fields.getTextInputValue("amount"));
       if (isNaN(amount) || amount < 1000)
-        return i.reply({ content: "❌ Số tiền không hợp lệ", flags: MessageFlags.Ephemeral });
+        return i.reply({
+          content: "❌ Số tiền không hợp lệ",
+          flags: MessageFlags.Ephemeral
+        });
 
       const code = `NAP${Date.now()}`;
       pending[code] = { userId, amount };
@@ -275,40 +220,6 @@ client.on("interactionCreate", async (i) => {
 
 app.post("/webhook", (req, res) => {
   res.sendStatus(200);
-
-  setImmediate(async () => {
-    try {
-      const { transferAmount, transferContent, id } = req.body;
-      if (!transferAmount || !transferContent) return;
-      if (id && processed.includes(id)) return;
-
-      const amount = Number(transferAmount);
-      const desc = transferContent.trim();
-
-      let match = Object.keys(pending).find(code => desc.includes(code));
-      if (!match) return;
-
-      const data = pending[match];
-      if (data.amount !== amount) return;
-
-      balances[data.userId] = (balances[data.userId] || 0) + amount;
-
-      if (id) processed.push(id);
-      delete pending[match];
-
-      save("./balances.json", balances);
-      save("./pending.json", pending);
-      save("./processed.json", processed);
-
-      const user = await client.users.fetch(data.userId);
-      await user.send(
-        `💰 Nạp thành công ${amount.toLocaleString()} VNĐ\n💵 Số dư: ${balances[data.userId].toLocaleString()} VNĐ`
-      );
-
-    } catch (err) {
-      console.error("Webhook error:", err);
-    }
-  });
 });
 
 /* ================= START ================= */
