@@ -24,7 +24,7 @@ const client = new Client({
 const app = express();
 app.use(express.json());
 
-/* ================= SAFE FILE ================= */
+/* ================= FILE SAFE ================= */
 
 function load(file, def) {
   try {
@@ -82,6 +82,12 @@ function components() {
         .setCustomId("balance")
         .setLabel("💵 Số dư")
         .setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("admin_add")
+        .setLabel("🔑 Admin Add Key")
+        .setStyle(ButtonStyle.Secondary)
     )
   ];
 }
@@ -174,31 +180,107 @@ client.on("interactionCreate", async (i) => {
       modal.addComponents(new ActionRowBuilder().addComponents(input));
       return i.showModal(modal);
     }
+
+    /* ===== ADMIN ADD ===== */
+    if (i.customId === "admin_add") {
+
+      const admins = process.env.ADMIN_IDS.split(",");
+      if (!admins.includes(userId))
+        return i.reply({
+          content: "❌ Không phải admin",
+          flags: MessageFlags.Ephemeral
+        });
+
+      const modal = new ModalBuilder()
+        .setCustomId("admin_add_modal")
+        .setTitle("Thêm Key");
+
+      const typeInput = new TextInputBuilder()
+        .setCustomId("type")
+        .setLabel("Loại (day/week/month)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const keyInput = new TextInputBuilder()
+        .setCustomId("keys")
+        .setLabel("Mỗi dòng 1 key")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(typeInput),
+        new ActionRowBuilder().addComponents(keyInput)
+      );
+
+      return i.showModal(modal);
+    }
   }
 
   /* ===== MODAL ===== */
   if (i.isModalSubmit()) {
 
-    const amount = Number(i.fields.getTextInputValue("amount"));
-    if (isNaN(amount) || amount < 1000)
-      return i.reply({ content: "❌ Số tiền không hợp lệ", flags: MessageFlags.Ephemeral });
+    /* === ADMIN MODAL === */
+    if (i.customId === "admin_add_modal") {
 
-    const code = `NAP${Date.now()}`;
+      const admins = process.env.ADMIN_IDS.split(",");
+      if (!admins.includes(userId))
+        return i.reply({
+          content: "❌ Không phải admin",
+          flags: MessageFlags.Ephemeral
+        });
 
-    pending[code] = { userId, amount };
-    save("./pending.json", pending);
+      const type = i.fields.getTextInputValue("type").toLowerCase().trim();
+      const rawKeys = i.fields.getTextInputValue("keys");
 
-    const qr =
-      `https://qr.sepay.vn/img?bank=${process.env.BANK}` +
-      `&acc=${process.env.ACC}` +
-      `&amount=${amount}` +
-      `&des=${code}`;
+      if (!["day", "week", "month"].includes(type))
+        return i.reply({
+          content: "❌ Loại không hợp lệ",
+          flags: MessageFlags.Ephemeral
+        });
 
-    return i.reply({
-      content:
-        `💳 Quét QR để nạp ${amount.toLocaleString()} VNĐ\n\n${qr}\n\n📌 Nội dung: ${code}`,
-      flags: MessageFlags.Ephemeral
-    });
+      const list = rawKeys
+        .split("\n")
+        .map(k => k.trim())
+        .filter(k => k.length > 0);
+
+      keys[type].push(...list);
+      save("./keys.json", keys);
+
+      await updatePanel();
+
+      return i.reply({
+        content: `✅ Đã thêm ${list.length} key`,
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
+    /* === NẠP TIỀN === */
+    if (i.customId === "nap_modal") {
+
+      const amount = Number(i.fields.getTextInputValue("amount"));
+      if (isNaN(amount) || amount < 1000)
+        return i.reply({
+          content: "❌ Số tiền không hợp lệ",
+          flags: MessageFlags.Ephemeral
+        });
+
+      const code = `NAP${Date.now()}`;
+
+      pending[code] = { userId, amount };
+      save("./pending.json", pending);
+
+      const qr =
+        `https://qr.sepay.vn/img?bank=${process.env.BANK}` +
+        `&acc=${process.env.ACC}` +
+        `&amount=${amount}` +
+        `&des=${code}`;
+
+      return i.reply({
+        content:
+          `💳 Quét QR để nạp ${amount.toLocaleString()} VNĐ\n\n${qr}\n\n📌 Nội dung: ${code}`,
+        flags: MessageFlags.Ephemeral
+      });
+    }
   }
 });
 
@@ -248,15 +330,13 @@ app.post("/webhook", (req, res) => {
         `💰 Nạp thành công ${amount.toLocaleString()} VNĐ\n💵 Số dư: ${balances[data.userId].toLocaleString()} VNĐ`
       );
 
-      console.log("NAP OK:", data.userId, amount);
-
     } catch (err) {
       console.error("WEBHOOK ERROR:", err);
     }
   });
 });
 
-/* ================= START SERVER ================= */
+/* ================= START ================= */
 
 app.listen(process.env.PORT, "0.0.0.0", () => {
   console.log("Server running on port", process.env.PORT);
@@ -264,7 +344,7 @@ app.listen(process.env.PORT, "0.0.0.0", () => {
 
 client.login(process.env.TOKEN)
   .then(() => console.log("Bot login success"))
-  .catch(err => console.error("LOGIN ERROR:", err));
+  .catch(console.error);
 
 process.on("unhandledRejection", console.error);
 process.on("uncaughtException", console.error);
