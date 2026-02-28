@@ -2,11 +2,11 @@
   "name": "ipa-shop-bot",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
   "engines": {
     "node": ">=18"
+  },
+  "scripts": {
+    "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
