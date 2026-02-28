@@ -1,11 +1,13 @@
 {
   "name": "discord-shop-bot",
   "version": "1.0.0",
-  "description": "Discord Shop Bot",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
     "start": "node index.js"
+  },
+  "engines": {
+    "node": "18.x"
   },
   "dependencies": {
     "discord.js": "14.14.1",
