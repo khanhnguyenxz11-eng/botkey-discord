@@ -8,6 +8,9 @@ const {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   Events
 } = require("discord.js");
 
@@ -16,9 +19,7 @@ const {
 const app = express();
 app.use(express.json());
 
-app.get("/", (req, res) => {
-  res.send("Bot is running");
-});
+app.get("/", (req, res) => res.send("Bot is running"));
 
 app.listen(process.env.PORT || 3000, () => {
   console.log("Web server running");
@@ -31,6 +32,7 @@ const client = new Client({
 });
 
 const DATA_FILE = "./data.json";
+let panelMessage = null;
 
 if (!fs.existsSync(DATA_FILE)) {
   fs.writeFileSync(
@@ -67,7 +69,7 @@ async function sendPanel() {
 🔑 Ngày còn: ${data.keys.ngay.length}
 `;
 
-  const row = new ActionRowBuilder().addComponents(
+  const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("nap")
       .setLabel("💳 Nạp tiền")
@@ -82,11 +84,24 @@ async function sendPanel() {
       .setStyle(ButtonStyle.Secondary)
   );
 
-  await channel.messages.fetch({ limit: 10 }).then(msgs => {
-    msgs.forEach(m => m.delete().catch(() => {}));
-  });
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("admin_panel")
+      .setLabel("🔐 Admin")
+      .setStyle(ButtonStyle.Danger)
+  );
 
-  channel.send({ content, components: [row] });
+  if (!panelMessage) {
+    panelMessage = await channel.send({
+      content,
+      components: [row1, row2]
+    });
+  } else {
+    await panelMessage.edit({
+      content,
+      components: [row1, row2]
+    });
+  }
 }
 
 /* ================= READY ================= */
@@ -120,7 +135,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.customId === "nap") {
       return interaction.reply({
         content:
-`💳 Chuyển khoản đúng nội dung:
+`💳 Chuyển khoản nội dung:
 
 ID${userId}
 
@@ -135,20 +150,11 @@ STK: ${process.env.BANK_ACC}`,
       const menu = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
           .setCustomId("buy_menu")
-          .setPlaceholder("Chọn sản phẩm muốn mua")
+          .setPlaceholder("Chọn sản phẩm")
           .addOptions([
-            {
-              label: "Key Tháng - 120000đ",
-              value: "thang"
-            },
-            {
-              label: "Key Tuần - 70000đ",
-              value: "tuan"
-            },
-            {
-              label: "Key Ngày - 15000đ",
-              value: "ngay"
-            }
+            { label: "Key Tháng - 120000đ", value: "thang" },
+            { label: "Key Tuần - 70000đ", value: "tuan" },
+            { label: "Key Ngày - 15000đ", value: "ngay" }
           ])
       );
 
@@ -158,34 +164,61 @@ STK: ${process.env.BANK_ACC}`,
         ephemeral: true
       });
     }
+
+    /* ===== ADMIN PANEL ===== */
+    if (interaction.customId === "admin_panel") {
+      if (userId !== process.env.ADMIN_ID)
+        return interaction.reply({ content: "❌ Không phải admin", ephemeral: true });
+
+      const menu = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("admin_add_key")
+          .setPlaceholder("Chọn loại key để thêm")
+          .addOptions([
+            { label: "Thêm Key Tháng", value: "thang" },
+            { label: "Thêm Key Tuần", value: "tuan" },
+            { label: "Thêm Key Ngày", value: "ngay" }
+          ])
+      );
+
+      return interaction.reply({
+        content: "🔐 Admin thêm key:",
+        components: [menu],
+        ephemeral: true
+      });
+    }
   }
 
-  /* ===== SELECT MENU ===== */
-  if (interaction.isStringSelectMenu()) {
+  /* ===== ADMIN ADD KEY ===== */
+  if (interaction.isStringSelectMenu() && interaction.customId === "admin_add_key") {
 
     const type = interaction.values[0];
 
-    const prices = {
-      thang: 120000,
-      tuan: 70000,
-      ngay: 15000
-    };
+    const modal = new ModalBuilder()
+      .setCustomId(`addkey_${type}`)
+      .setTitle("Thêm Key");
 
+    const input = new TextInputBuilder()
+      .setCustomId("key_input")
+      .setLabel("Nhập key (mỗi dòng 1 key)")
+      .setStyle(TextInputStyle.Paragraph);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return interaction.showModal(modal);
+  }
+
+  /* ===== BUY MENU ===== */
+  if (interaction.isStringSelectMenu() && interaction.customId === "buy_menu") {
+
+    const type = interaction.values[0];
+    const prices = { thang: 120000, tuan: 70000, ngay: 15000 };
     const price = prices[type];
 
-    if (data.users[userId].balance < price) {
-      return interaction.reply({
-        content: "❌ Không đủ số dư!",
-        ephemeral: true
-      });
-    }
+    if (data.users[userId].balance < price)
+      return interaction.reply({ content: "❌ Không đủ số dư!", ephemeral: true });
 
-    if (data.keys[type].length === 0) {
-      return interaction.reply({
-        content: "❌ Hết key!",
-        ephemeral: true
-      });
-    }
+    if (data.keys[type].length === 0)
+      return interaction.reply({ content: "❌ Hết key!", ephemeral: true });
 
     const key = data.keys[type].shift();
     data.users[userId].balance -= price;
@@ -193,6 +226,31 @@ STK: ${process.env.BANK_ACC}`,
 
     await interaction.reply({
       content: `✅ Mua thành công!\n🔑 Key: ${key}`,
+      ephemeral: true
+    });
+
+    sendPanel();
+  }
+
+  /* ===== MODAL SUBMIT ===== */
+  if (interaction.isModalSubmit()) {
+
+    if (!interaction.customId.startsWith("addkey_")) return;
+
+    if (interaction.user.id !== process.env.ADMIN_ID)
+      return interaction.reply({ content: "❌ Không phải admin", ephemeral: true });
+
+    const type = interaction.customId.split("_")[1];
+    const keys = interaction.fields.getTextInputValue("key_input")
+      .split("\n")
+      .map(k => k.trim())
+      .filter(Boolean);
+
+    data.keys[type].push(...keys);
+    saveData(data);
+
+    await interaction.reply({
+      content: `✅ Đã thêm ${keys.length} key`,
       ephemeral: true
     });
 
@@ -215,15 +273,12 @@ app.post("/webhook", async (req, res) => {
 
   const data = loadData();
 
-  if (data.transactions.includes(body.transactionID)) {
+  if (data.transactions.includes(body.transactionID))
     return res.sendStatus(200);
-  }
 
   data.transactions.push(body.transactionID);
 
-  if (!data.users[userId]) {
-    data.users[userId] = { balance: 0 };
-  }
+  if (!data.users[userId]) data.users[userId] = { balance: 0 };
 
   data.users[userId].balance += amount;
   saveData(data);
