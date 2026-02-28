@@ -11,24 +11,29 @@ const {
   EmbedBuilder,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  MessageFlags
 } = require("discord.js");
+
+/* ================= INIT ================= */
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
-/* =======================
-   LOAD DATA
-======================= */
+/* ================= SAFE LOAD ================= */
 
 function load(file, def) {
-  return fs.existsSync(file)
-    ? JSON.parse(fs.readFileSync(file))
-    : def;
+  try {
+    return fs.existsSync(file)
+      ? JSON.parse(fs.readFileSync(file))
+      : def;
+  } catch {
+    return def;
+  }
 }
 
 function save(file, data) {
@@ -36,38 +41,36 @@ function save(file, data) {
 }
 
 let balances = load("./balances.json", {});
-let keys = load("./keys.json", { day: [], week: [], month: [] });
 let pending = load("./pending.json", {});
-let transactions = load("./transactions.json", []);
-let panelData = load("./panel.json", { messageId: null });
+let processed = load("./processed.json", []);
+let keys = load("./keys.json", { day: [], week: [], month: [] });
+let panel = load("./panel.json", { messageId: null });
 
-/* =======================
-   PANEL
-======================= */
+/* ================= PANEL ================= */
 
 function createEmbed() {
   return new EmbedBuilder()
-    .setTitle("🛒 IPA Shop")
+    .setTitle("🛒 IPA SHOP")
     .setDescription(
-      `📅 Gói Ngày (15K)\nKho: ${keys.day.length}\n\n` +
-      `📆 Gói Tuần (70K)\nKho: ${keys.week.length}\n\n` +
-      `🗓 Gói Tháng (120K)\nKho: ${keys.month.length}`
+      `📅 Ngày (15K): ${keys.day.length}\n` +
+      `📆 Tuần (70K): ${keys.week.length}\n` +
+      `🗓 Tháng (120K): ${keys.month.length}`
     )
     .setColor("#5865F2");
 }
 
 function createComponents() {
-  const select = new StringSelectMenuBuilder()
-    .setCustomId("buy")
-    .setPlaceholder("Chọn gói")
-    .addOptions([
-      { label: "Gói Ngày (15K)", value: "day" },
-      { label: "Gói Tuần (70K)", value: "week" },
-      { label: "Gói Tháng (120K)", value: "month" }
-    ]);
-
   return [
-    new ActionRowBuilder().addComponents(select),
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId("buy")
+        .setPlaceholder("Chọn gói")
+        .addOptions([
+          { label: "Ngày (15K)", value: "day" },
+          { label: "Tuần (70K)", value: "week" },
+          { label: "Tháng (120K)", value: "month" }
+        ])
+    ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("nap")
@@ -81,127 +84,124 @@ function createComponents() {
   ];
 }
 
-async function sendOrUpdatePanel() {
+async function updatePanel() {
   const channel = await client.channels.fetch(process.env.CHANNEL_ID);
 
   try {
-    if (!panelData.messageId) {
+    if (!panel.messageId) {
       const msg = await channel.send({
         embeds: [createEmbed()],
         components: createComponents()
       });
-      panelData.messageId = msg.id;
-      save("./panel.json", panelData);
+      panel.messageId = msg.id;
+      save("./panel.json", panel);
     } else {
-      const msg = await channel.messages.fetch(panelData.messageId);
+      const msg = await channel.messages.fetch(panel.messageId);
       await msg.edit({
         embeds: [createEmbed()],
         components: createComponents()
       });
     }
   } catch {
-    panelData.messageId = null;
-    save("./panel.json", panelData);
+    panel.messageId = null;
+    save("./panel.json", panel);
   }
 }
 
-/* =======================
-   READY
-======================= */
+/* ================= READY ================= */
 
-client.once("ready", async () => {
-  console.log("Bot ready");
-  await sendOrUpdatePanel();
+client.once("clientReady", async () => {
+  console.log(`BOT READY: ${client.user.tag}`);
+  await updatePanel();
 });
 
-/* =======================
-   INTERACTIONS
-======================= */
+/* ================= INTERACTION ================= */
 
-client.on("interactionCreate", async interaction => {
+client.on("interactionCreate", async (i) => {
 
-  const userId = interaction.user.id;
+  const userId = i.user.id;
   if (!balances[userId]) balances[userId] = 0;
 
-  /* ===== MUA ===== */
-  if (interaction.isStringSelectMenu()) {
+  /* ===== BUY ===== */
+  if (i.isStringSelectMenu()) {
 
-    const prices = { day: 15000, week: 70000, month: 120000 };
-    const type = interaction.values[0];
+    const price = { day: 15000, week: 70000, month: 120000 };
+    const type = i.values[0];
 
-    if (balances[userId] < prices[type])
-      return interaction.reply({ content: "❌ Không đủ tiền", ephemeral: true });
+    if (balances[userId] < price[type])
+      return i.reply({
+        content: "❌ Không đủ tiền",
+        flags: MessageFlags.Ephemeral
+      });
 
-    if (keys[type].length === 0)
-      return interaction.reply({ content: "❌ Hết key", ephemeral: true });
+    if (!keys[type].length)
+      return i.reply({
+        content: "❌ Hết key",
+        flags: MessageFlags.Ephemeral
+      });
 
     const key = keys[type].shift();
-    balances[userId] -= prices[type];
-
-    transactions.push({
-      type: "buy",
-      userId,
-      package: type,
-      key,
-      amount: prices[type],
-      time: Date.now()
-    });
+    balances[userId] -= price[type];
 
     save("./balances.json", balances);
     save("./keys.json", keys);
-    save("./transactions.json", transactions);
 
-    await sendOrUpdatePanel();
+    await updatePanel();
 
-    return interaction.reply({
-      content: `✅ Mua thành công\n🔑 ${key}\n💵 Số dư còn: ${balances[userId]} VNĐ`,
-      ephemeral: true
+    return i.reply({
+      content:
+        `✅ Thành công\n🔑 ${key}\n💵 Còn: ${balances[userId]} VNĐ`,
+      flags: MessageFlags.Ephemeral
     });
   }
 
-  /* ===== NẠP ===== */
-  if (interaction.isButton() && interaction.customId === "nap") {
+  /* ===== BUTTON ===== */
+  if (i.isButton()) {
 
-    if (Object.values(pending).find(p => p.userId === userId))
-      return interaction.reply({
-        content: "❌ Bạn đang có 1 giao dịch chờ xử lý",
-        ephemeral: true
+    if (i.customId === "balance")
+      return i.reply({
+        content: `💵 Số dư: ${balances[userId]} VNĐ`,
+        flags: MessageFlags.Ephemeral
       });
 
-    const modal = new ModalBuilder()
-      .setCustomId("nap_modal")
-      .setTitle("Nhập số tiền nạp");
+    if (i.customId === "nap") {
 
-    const input = new TextInputBuilder()
-      .setCustomId("amount")
-      .setLabel("Nhập số tiền (VNĐ)")
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
+      if (Object.values(pending).some(p => p.userId === userId))
+        return i.reply({
+          content: "❌ Bạn đang có giao dịch chờ",
+          flags: MessageFlags.Ephemeral
+        });
 
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-    return interaction.showModal(modal);
+      const modal = new ModalBuilder()
+        .setCustomId("nap_modal")
+        .setTitle("Nhập số tiền");
+
+      const input = new TextInputBuilder()
+        .setCustomId("amount")
+        .setLabel("Số tiền (VNĐ)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(input));
+      return i.showModal(modal);
+    }
   }
 
-  if (interaction.isButton() && interaction.customId === "balance") {
-    return interaction.reply({
-      content: `💵 Số dư: ${balances[userId]} VNĐ`,
-      ephemeral: true
-    });
-  }
+  /* ===== MODAL ===== */
+  if (i.isModalSubmit()) {
 
-  /* ===== SUBMIT MODAL ===== */
-  if (interaction.isModalSubmit()) {
-
-    const amount = Number(interaction.fields.getTextInputValue("amount"));
+    const amount = Number(i.fields.getTextInputValue("amount"));
     if (isNaN(amount) || amount < 1000)
-      return interaction.reply({ content: "❌ Số tiền không hợp lệ", ephemeral: true });
+      return i.reply({
+        content: "❌ Số tiền không hợp lệ",
+        flags: MessageFlags.Ephemeral
+      });
 
-    const code = `NAP_${userId}_${Date.now()}`;
+    const code = `NAP${Date.now()}`;
 
     pending[code] = {
       userId,
-      amount,
-      createdAt: Date.now()
+      amount
     };
 
     save("./pending.json", pending);
@@ -212,72 +212,86 @@ client.on("interactionCreate", async interaction => {
       `&amount=${amount}` +
       `&des=${code}`;
 
-    return interaction.reply({
+    return i.reply({
       content:
-        `💳 Quét QR để nạp ${amount} VNĐ\n\n${qr}\n\n` +
-        `📌 Nội dung: ${code}`,
-      ephemeral: true
+        `💳 Quét QR để nạp ${amount} VNĐ\n\n${qr}\n\n📌 Nội dung: ${code}`,
+      flags: MessageFlags.Ephemeral
     });
   }
 });
 
-/* =======================
-   WEBHOOK
-======================= */
+/* ================= WEBHOOK REALTIME ================= */
 
-app.post("/webhook", async (req, res) => {
+app.post("/webhook", (req, res) => {
 
-  if (req.headers["x-secret"] !== process.env.WEBHOOK_SECRET)
-    return res.sendStatus(403);
+  res.sendStatus(200); // trả về ngay cho bank
 
-  const desc = req.body.transferContent;
-  const amount = Number(req.body.transferAmount);
+  setImmediate(async () => {
+    try {
 
-  if (!desc || !amount) return res.sendStatus(200);
+      console.log("WEBHOOK:", req.body);
 
-  const code = Object.keys(pending).find(c => desc.includes(c));
-  if (!code) return res.sendStatus(200);
+      const desc =
+        req.body.transferContent ||
+        req.body.content ||
+        req.body.description ||
+        "";
 
-  const data = pending[code];
-  if (data.amount !== amount) return res.sendStatus(200);
+      const amount =
+        Number(req.body.transferAmount) ||
+        Number(req.body.amount) ||
+        0;
 
-  balances[data.userId] += amount;
+      if (!desc || !amount) return;
 
-  transactions.push({
-    type: "deposit",
-    userId: data.userId,
-    amount,
-    time: Date.now()
+      let foundCode = null;
+
+      for (const code in pending) {
+        if (desc.includes(code)) {
+          foundCode = code;
+          break;
+        }
+      }
+
+      if (!foundCode) return;
+      if (processed.includes(foundCode)) return;
+
+      const data = pending[foundCode];
+      if (data.amount !== amount) return;
+
+      balances[data.userId] =
+        (balances[data.userId] || 0) + amount;
+
+      processed.push(foundCode);
+      delete pending[foundCode];
+
+      save("./balances.json", balances);
+      save("./pending.json", pending);
+      save("./processed.json", processed);
+
+      const user = await client.users.fetch(data.userId);
+      await user.send(
+        `💰 Nạp thành công ${amount} VNĐ\n💵 Số dư: ${balances[data.userId]} VNĐ`
+      );
+
+      console.log("NẠP OK:", data.userId, amount);
+
+    } catch (err) {
+      console.error("WEBHOOK ERROR:", err);
+    }
   });
 
-  delete pending[code];
-
-  save("./balances.json", balances);
-  save("./pending.json", pending);
-  save("./transactions.json", transactions);
-
-  try {
-    const user = await client.users.fetch(data.userId);
-    await user.send(
-      `✅ Nạp thành công +${amount} VNĐ\n💵 Số dư hiện tại: ${balances[data.userId]} VNĐ`
-    );
-  } catch {}
-
-  res.sendStatus(200);
 });
 
-/* =======================
-   CLEAN PENDING 15P
-======================= */
+/* ================= ANTI CRASH ================= */
 
-setInterval(() => {
-  const now = Date.now();
-  for (const code in pending) {
-    if (now - pending[code].createdAt > 15 * 60 * 1000)
-      delete pending[code];
-  }
-  save("./pending.json", pending);
-}, 10 * 60 * 1000);
+process.on("unhandledRejection", err =>
+  console.error("UNHANDLED:", err)
+);
+
+process.on("uncaughtException", err =>
+  console.error("UNCAUGHT:", err)
+);
 
 app.listen(process.env.PORT || 3000);
 client.login(process.env.TOKEN);
