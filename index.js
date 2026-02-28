@@ -24,7 +24,7 @@ const client = new Client({
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-/* ================= SAFE LOAD ================= */
+/* ================= FILE UTILS ================= */
 
 function load(file, def) {
   try {
@@ -39,6 +39,8 @@ function load(file, def) {
 function save(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
+
+/* ================= LOAD DATA ================= */
 
 let balances = load("./balances.json", {});
 let pending = load("./pending.json", {});
@@ -150,7 +152,7 @@ client.on("interactionCreate", async (i) => {
 
     return i.reply({
       content:
-        `✅ Thành công\n🔑 ${key}\n💵 Còn: ${balances[userId]} VNĐ`,
+        `✅ Thành công\n🔑 ${key}\n💵 Còn: ${balances[userId].toLocaleString()} VNĐ`,
       flags: MessageFlags.Ephemeral
     });
   }
@@ -160,7 +162,7 @@ client.on("interactionCreate", async (i) => {
 
     if (i.customId === "balance")
       return i.reply({
-        content: `💵 Số dư: ${balances[userId]} VNĐ`,
+        content: `💵 Số dư: ${balances[userId].toLocaleString()} VNĐ`,
         flags: MessageFlags.Ephemeral
       });
 
@@ -214,56 +216,57 @@ client.on("interactionCreate", async (i) => {
 
     return i.reply({
       content:
-        `💳 Quét QR để nạp ${amount} VNĐ\n\n${qr}\n\n📌 Nội dung: ${code}`,
+        `💳 Quét QR để nạp ${amount.toLocaleString()} VNĐ\n\n${qr}\n\n📌 Nội dung: ${code}`,
       flags: MessageFlags.Ephemeral
     });
   }
 });
 
-/* ================= WEBHOOK REALTIME ================= */
+/* ================= SEPAY WEBHOOK ================= */
 
 app.post("/webhook", (req, res) => {
 
-  res.sendStatus(200); // trả về ngay cho bank
+  res.sendStatus(200); // trả về ngay
 
   setImmediate(async () => {
     try {
 
-      console.log("WEBHOOK:", req.body);
+      console.log("SEPAY WEBHOOK:", req.body);
 
-      const desc =
-        req.body.transferContent ||
-        req.body.content ||
-        req.body.description ||
-        "";
+      const {
+        transferAmount,
+        transferContent,
+        status,
+        id
+      } = req.body;
 
-      const amount =
-        Number(req.body.transferAmount) ||
-        Number(req.body.amount) ||
-        0;
+      if (!transferAmount || !transferContent) return;
+      if (status && status !== "success") return;
 
-      if (!desc || !amount) return;
+      const amount = Number(transferAmount);
+      const desc = transferContent.trim();
 
-      let foundCode = null;
+      if (id && processed.includes(id)) return;
+
+      let matchedCode = null;
 
       for (const code in pending) {
         if (desc.includes(code)) {
-          foundCode = code;
+          matchedCode = code;
           break;
         }
       }
 
-      if (!foundCode) return;
-      if (processed.includes(foundCode)) return;
+      if (!matchedCode) return;
 
-      const data = pending[foundCode];
+      const data = pending[matchedCode];
       if (data.amount !== amount) return;
 
       balances[data.userId] =
         (balances[data.userId] || 0) + amount;
 
-      processed.push(foundCode);
-      delete pending[foundCode];
+      if (id) processed.push(id);
+      delete pending[matchedCode];
 
       save("./balances.json", balances);
       save("./pending.json", pending);
@@ -271,10 +274,11 @@ app.post("/webhook", (req, res) => {
 
       const user = await client.users.fetch(data.userId);
       await user.send(
-        `💰 Nạp thành công ${amount} VNĐ\n💵 Số dư: ${balances[data.userId]} VNĐ`
+        `💰 Nạp thành công ${amount.toLocaleString()} VNĐ\n` +
+        `💵 Số dư hiện tại: ${balances[data.userId].toLocaleString()} VNĐ`
       );
 
-      console.log("NẠP OK:", data.userId, amount);
+      console.log("NẠP THÀNH CÔNG:", data.userId, amount);
 
     } catch (err) {
       console.error("WEBHOOK ERROR:", err);
