@@ -17,6 +17,11 @@ const {
 
 /* ================= INIT ================= */
 
+if (!process.env.TOKEN) {
+  console.error("❌ Missing TOKEN in ENV");
+  process.exit(1);
+}
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
@@ -93,9 +98,12 @@ function components() {
 }
 
 async function updatePanel() {
-  const channel = await client.channels.fetch(process.env.CHANNEL_ID);
-
   try {
+    if (!process.env.CHANNEL_ID) return;
+
+    const channel = await client.channels.fetch(process.env.CHANNEL_ID);
+    if (!channel) return;
+
     if (!panel.messageId) {
       const msg = await channel.send({
         embeds: [embed()],
@@ -110,7 +118,8 @@ async function updatePanel() {
         components: components()
       });
     }
-  } catch {
+  } catch (err) {
+    console.error("Panel error:", err);
     panel.messageId = null;
     save("./panel.json", panel);
   }
@@ -119,20 +128,18 @@ async function updatePanel() {
 /* ================= READY ================= */
 
 client.once("clientReady", async () => {
-  console.log("BOT READY:", client.user.tag);
+  console.log("🤖 BOT READY:", client.user.tag);
   await updatePanel();
 });
 
 /* ================= INTERACTION ================= */
 
 client.on("interactionCreate", async (i) => {
-
   const userId = i.user.id;
   if (!balances[userId]) balances[userId] = 0;
 
   /* ===== BUY ===== */
   if (i.isStringSelectMenu()) {
-
     const price = { day: 15000, week: 70000, month: 120000 };
     const type = i.values[0];
 
@@ -166,7 +173,6 @@ client.on("interactionCreate", async (i) => {
       });
 
     if (i.customId === "nap") {
-
       const modal = new ModalBuilder()
         .setCustomId("nap_modal")
         .setTitle("Nhập số tiền");
@@ -181,10 +187,9 @@ client.on("interactionCreate", async (i) => {
       return i.showModal(modal);
     }
 
-    /* ===== ADMIN ADD ===== */
     if (i.customId === "admin_add") {
+      const admins = (process.env.ADMIN_IDS || "").split(",");
 
-      const admins = process.env.ADMIN_IDS.split(",");
       if (!admins.includes(userId))
         return i.reply({
           content: "❌ Không phải admin",
@@ -219,33 +224,21 @@ client.on("interactionCreate", async (i) => {
   /* ===== MODAL ===== */
   if (i.isModalSubmit()) {
 
-    /* === ADMIN MODAL === */
     if (i.customId === "admin_add_modal") {
-
-      const admins = process.env.ADMIN_IDS.split(",");
+      const admins = (process.env.ADMIN_IDS || "").split(",");
       if (!admins.includes(userId))
-        return i.reply({
-          content: "❌ Không phải admin",
-          flags: MessageFlags.Ephemeral
-        });
+        return i.reply({ content: "❌ Không phải admin", flags: MessageFlags.Ephemeral });
 
       const type = i.fields.getTextInputValue("type").toLowerCase().trim();
       const rawKeys = i.fields.getTextInputValue("keys");
 
       if (!["day", "week", "month"].includes(type))
-        return i.reply({
-          content: "❌ Loại không hợp lệ",
-          flags: MessageFlags.Ephemeral
-        });
+        return i.reply({ content: "❌ Loại không hợp lệ", flags: MessageFlags.Ephemeral });
 
-      const list = rawKeys
-        .split("\n")
-        .map(k => k.trim())
-        .filter(k => k.length > 0);
-
+      const list = rawKeys.split("\n").map(k => k.trim()).filter(Boolean);
       keys[type].push(...list);
-      save("./keys.json", keys);
 
+      save("./keys.json", keys);
       await updatePanel();
 
       return i.reply({
@@ -254,24 +247,18 @@ client.on("interactionCreate", async (i) => {
       });
     }
 
-    /* === NẠP TIỀN === */
     if (i.customId === "nap_modal") {
-
       const amount = Number(i.fields.getTextInputValue("amount"));
       if (isNaN(amount) || amount < 1000)
-        return i.reply({
-          content: "❌ Số tiền không hợp lệ",
-          flags: MessageFlags.Ephemeral
-        });
+        return i.reply({ content: "❌ Số tiền không hợp lệ", flags: MessageFlags.Ephemeral });
 
       const code = `NAP${Date.now()}`;
-
       pending[code] = { userId, amount };
       save("./pending.json", pending);
 
       const qr =
-        `https://qr.sepay.vn/img?bank=${process.env.BANK}` +
-        `&acc=${process.env.ACC}` +
+        `https://qr.sepay.vn/img?bank=${process.env.BANK || ""}` +
+        `&acc=${process.env.ACC || ""}` +
         `&amount=${amount}` +
         `&des=${code}`;
 
@@ -284,39 +271,27 @@ client.on("interactionCreate", async (i) => {
   }
 });
 
-/* ================= SEPAY WEBHOOK ================= */
+/* ================= WEBHOOK ================= */
 
 app.post("/webhook", (req, res) => {
-
   res.sendStatus(200);
 
   setImmediate(async () => {
     try {
-
-      const { transferAmount, transferContent, status, id } = req.body;
-
+      const { transferAmount, transferContent, id } = req.body;
       if (!transferAmount || !transferContent) return;
-      if (status && status !== "success") return;
       if (id && processed.includes(id)) return;
 
       const amount = Number(transferAmount);
       const desc = transferContent.trim();
 
-      let match = null;
-      for (const code in pending) {
-        if (desc.includes(code)) {
-          match = code;
-          break;
-        }
-      }
-
+      let match = Object.keys(pending).find(code => desc.includes(code));
       if (!match) return;
 
       const data = pending[match];
       if (data.amount !== amount) return;
 
-      balances[data.userId] =
-        (balances[data.userId] || 0) + amount;
+      balances[data.userId] = (balances[data.userId] || 0) + amount;
 
       if (id) processed.push(id);
       delete pending[match];
@@ -331,20 +306,25 @@ app.post("/webhook", (req, res) => {
       );
 
     } catch (err) {
-      console.error("WEBHOOK ERROR:", err);
+      console.error("Webhook error:", err);
     }
   });
 });
 
 /* ================= START ================= */
 
-app.listen(process.env.PORT, "0.0.0.0", () => {
-  console.log("Server running on port", process.env.PORT);
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("🌐 Server running on port", PORT);
 });
 
 client.login(process.env.TOKEN)
-  .then(() => console.log("Bot login success"))
-  .catch(console.error);
+  .then(() => console.log("✅ Bot login success"))
+  .catch(err => {
+    console.error("Login error:", err);
+    process.exit(1);
+  });
 
 process.on("unhandledRejection", console.error);
 process.on("uncaughtException", console.error);
