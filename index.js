@@ -24,7 +24,7 @@ const client = new Client({
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-/* ================= FILE UTILS ================= */
+/* ================= SAFE FILE ================= */
 
 function load(file, def) {
   try {
@@ -104,7 +104,8 @@ async function updatePanel() {
         components: createComponents()
       });
     }
-  } catch {
+  } catch (err) {
+    console.error("PANEL ERROR:", err);
     panel.messageId = null;
     save("./panel.json", panel);
   }
@@ -124,23 +125,16 @@ client.on("interactionCreate", async (i) => {
   const userId = i.user.id;
   if (!balances[userId]) balances[userId] = 0;
 
-  /* ===== BUY ===== */
   if (i.isStringSelectMenu()) {
 
     const price = { day: 15000, week: 70000, month: 120000 };
     const type = i.values[0];
 
     if (balances[userId] < price[type])
-      return i.reply({
-        content: "❌ Không đủ tiền",
-        flags: MessageFlags.Ephemeral
-      });
+      return i.reply({ content: "❌ Không đủ tiền", flags: MessageFlags.Ephemeral });
 
     if (!keys[type].length)
-      return i.reply({
-        content: "❌ Hết key",
-        flags: MessageFlags.Ephemeral
-      });
+      return i.reply({ content: "❌ Hết key", flags: MessageFlags.Ephemeral });
 
     const key = keys[type].shift();
     balances[userId] -= price[type];
@@ -151,13 +145,11 @@ client.on("interactionCreate", async (i) => {
     await updatePanel();
 
     return i.reply({
-      content:
-        `✅ Thành công\n🔑 ${key}\n💵 Còn: ${balances[userId].toLocaleString()} VNĐ`,
+      content: `✅ Thành công\n🔑 ${key}\n💵 Còn: ${balances[userId].toLocaleString()} VNĐ`,
       flags: MessageFlags.Ephemeral
     });
   }
 
-  /* ===== BUTTON ===== */
   if (i.isButton()) {
 
     if (i.customId === "balance")
@@ -189,7 +181,6 @@ client.on("interactionCreate", async (i) => {
     }
   }
 
-  /* ===== MODAL ===== */
   if (i.isModalSubmit()) {
 
     const amount = Number(i.fields.getTextInputValue("amount"));
@@ -201,11 +192,7 @@ client.on("interactionCreate", async (i) => {
 
     const code = `NAP${Date.now()}`;
 
-    pending[code] = {
-      userId,
-      amount
-    };
-
+    pending[code] = { userId, amount };
     save("./pending.json", pending);
 
     const qr =
@@ -226,19 +213,14 @@ client.on("interactionCreate", async (i) => {
 
 app.post("/webhook", (req, res) => {
 
-  res.sendStatus(200); // trả về ngay
+  res.sendStatus(200);
 
   setImmediate(async () => {
     try {
 
-      console.log("SEPAY WEBHOOK:", req.body);
+      console.log("SEPAY:", req.body);
 
-      const {
-        transferAmount,
-        transferContent,
-        status,
-        id
-      } = req.body;
+      const { transferAmount, transferContent, status, id } = req.body;
 
       if (!transferAmount || !transferContent) return;
       if (status && status !== "success") return;
@@ -249,7 +231,6 @@ app.post("/webhook", (req, res) => {
       if (id && processed.includes(id)) return;
 
       let matchedCode = null;
-
       for (const code in pending) {
         if (desc.includes(code)) {
           matchedCode = code;
@@ -274,28 +255,30 @@ app.post("/webhook", (req, res) => {
 
       const user = await client.users.fetch(data.userId);
       await user.send(
-        `💰 Nạp thành công ${amount.toLocaleString()} VNĐ\n` +
-        `💵 Số dư hiện tại: ${balances[data.userId].toLocaleString()} VNĐ`
+        `💰 Nạp thành công ${amount.toLocaleString()} VNĐ\n💵 Số dư: ${balances[data.userId].toLocaleString()} VNĐ`
       );
 
-      console.log("NẠP THÀNH CÔNG:", data.userId, amount);
+      console.log("NẠP OK:", data.userId, amount);
 
     } catch (err) {
       console.error("WEBHOOK ERROR:", err);
     }
   });
-
 });
+
+/* ================= START SERVER ================= */
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Server running on port", PORT);
+});
+
+client.login(process.env.TOKEN)
+  .then(() => console.log("Bot login success"))
+  .catch(err => console.error("LOGIN ERROR:", err));
 
 /* ================= ANTI CRASH ================= */
 
-process.on("unhandledRejection", err =>
-  console.error("UNHANDLED:", err)
-);
-
-process.on("uncaughtException", err =>
-  console.error("UNCAUGHT:", err)
-);
-
-app.listen(process.env.PORT || 3000);
-client.login(process.env.TOKEN);
+process.on("unhandledRejection", err => console.error(err));
+process.on("uncaughtException", err => console.error(err));
