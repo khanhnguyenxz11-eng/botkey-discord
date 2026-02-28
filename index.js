@@ -1,31 +1,34 @@
 require("dotenv").config();
 const express = require("express");
-const {
-  Client,
-  GatewayIntentBits,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  EmbedBuilder
+const bodyParser = require("body-parser");
+const { 
+  Client, 
+  GatewayIntentBits, 
+  ActionRowBuilder, 
+  ButtonBuilder, 
+  ButtonStyle, 
+  EmbedBuilder 
 } = require("discord.js");
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
-// ================= WEB SERVER (CHO RAILWAY) =================
+// ================= WEB SERVER (BẮT BUỘC CHO RAILWAY) =================
 
-// Route chính
 app.get("/", (req, res) => {
   res.send("Bot is running!");
 });
 
-// Webhook test (sau này dùng cho bank)
+// Webhook nhận tiền từ bank (sau này bạn dán webhook ở SePay)
 app.post("/webhook", (req, res) => {
-  console.log("Webhook received:", req.body);
+  console.log("Webhook data:", req.body);
+
+  // TODO: xử lý cộng tiền ở đây
+
   res.status(200).send("OK");
 });
 
-// Bắt buộc Railway dùng PORT này
+// Railway bắt buộc phải dùng PORT của nó
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Web server running on port " + PORT);
@@ -36,8 +39,7 @@ app.listen(PORT, () => {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.GuildMessages
   ]
 });
 
@@ -45,11 +47,21 @@ client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// Lệnh !panel
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
+// Khi bot được mention hoặc gõ lệnh
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isButton()) return;
 
+  if (interaction.customId === "nap_tien") {
+    await interaction.reply({
+      content: "Nhập số tiền bạn muốn nạp:",
+      ephemeral: true
+    });
+  }
+});
+
+client.on("messageCreate", async message => {
   if (message.content === "!panel") {
+
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("nap_tien")
@@ -58,45 +70,14 @@ client.on("messageCreate", async (message) => {
     );
 
     const embed = new EmbedBuilder()
-      .setTitle("💳 Hệ thống nạp tiền")
-      .setDescription("Nhấn nút bên dưới để nạp tiền")
-      .setColor(0x00AE86);
+      .setTitle("Hệ thống nạp tiền")
+      .setDescription("Nhấn nút bên dưới để nạp tiền");
 
-    await message.channel.send({
+    message.channel.send({
       embeds: [embed],
       components: [row]
     });
   }
 });
 
-// Xử lý button
-client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isButton()) return;
-
-  if (interaction.customId === "nap_tien") {
-    await interaction.reply({
-      content: "Vui lòng nhập số tiền bạn muốn nạp.",
-      ephemeral: true
-    });
-  }
-});
-
-// ================= CHỐNG CRASH =================
-
-process.on("unhandledRejection", (err) => {
-  console.error("Unhandled Rejection:", err);
-});
-
-process.on("uncaughtException", (err) => {
-  console.error("Uncaught Exception:", err);
-});
-
-// ================= LOGIN =================
-
-if (!process.env.TOKEN) {
-  console.log("❌ TOKEN chưa được thêm vào Railway Variables");
-} else {
-  client.login(process.env.TOKEN).catch(err => {
-    console.error("Login error:", err);
-  });
-}
+client.login(process.env.TOKEN);
