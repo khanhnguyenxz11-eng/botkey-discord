@@ -22,7 +22,7 @@ const client = new Client({
 });
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json());
 
 /* ================= SAFE FILE ================= */
 
@@ -40,7 +40,7 @@ function save(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
-/* ================= LOAD DATA ================= */
+/* ================= DATA ================= */
 
 let balances = load("./balances.json", {});
 let pending = load("./pending.json", {});
@@ -50,7 +50,7 @@ let panel = load("./panel.json", { messageId: null });
 
 /* ================= PANEL ================= */
 
-function createEmbed() {
+function embed() {
   return new EmbedBuilder()
     .setTitle("🛒 IPA SHOP")
     .setDescription(
@@ -61,7 +61,7 @@ function createEmbed() {
     .setColor("#5865F2");
 }
 
-function createComponents() {
+function components() {
   return [
     new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
@@ -92,20 +92,19 @@ async function updatePanel() {
   try {
     if (!panel.messageId) {
       const msg = await channel.send({
-        embeds: [createEmbed()],
-        components: createComponents()
+        embeds: [embed()],
+        components: components()
       });
       panel.messageId = msg.id;
       save("./panel.json", panel);
     } else {
       const msg = await channel.messages.fetch(panel.messageId);
       await msg.edit({
-        embeds: [createEmbed()],
-        components: createComponents()
+        embeds: [embed()],
+        components: components()
       });
     }
-  } catch (err) {
-    console.error("PANEL ERROR:", err);
+  } catch {
     panel.messageId = null;
     save("./panel.json", panel);
   }
@@ -114,7 +113,7 @@ async function updatePanel() {
 /* ================= READY ================= */
 
 client.once("clientReady", async () => {
-  console.log(`BOT READY: ${client.user.tag}`);
+  console.log("BOT READY:", client.user.tag);
   await updatePanel();
 });
 
@@ -125,6 +124,7 @@ client.on("interactionCreate", async (i) => {
   const userId = i.user.id;
   if (!balances[userId]) balances[userId] = 0;
 
+  /* ===== BUY ===== */
   if (i.isStringSelectMenu()) {
 
     const price = { day: 15000, week: 70000, month: 120000 };
@@ -150,6 +150,7 @@ client.on("interactionCreate", async (i) => {
     });
   }
 
+  /* ===== BUTTON ===== */
   if (i.isButton()) {
 
     if (i.customId === "balance")
@@ -159,12 +160,6 @@ client.on("interactionCreate", async (i) => {
       });
 
     if (i.customId === "nap") {
-
-      if (Object.values(pending).some(p => p.userId === userId))
-        return i.reply({
-          content: "❌ Bạn đang có giao dịch chờ",
-          flags: MessageFlags.Ephemeral
-        });
 
       const modal = new ModalBuilder()
         .setCustomId("nap_modal")
@@ -181,14 +176,12 @@ client.on("interactionCreate", async (i) => {
     }
   }
 
+  /* ===== MODAL ===== */
   if (i.isModalSubmit()) {
 
     const amount = Number(i.fields.getTextInputValue("amount"));
     if (isNaN(amount) || amount < 1000)
-      return i.reply({
-        content: "❌ Số tiền không hợp lệ",
-        flags: MessageFlags.Ephemeral
-      });
+      return i.reply({ content: "❌ Số tiền không hợp lệ", flags: MessageFlags.Ephemeral });
 
     const code = `NAP${Date.now()}`;
 
@@ -218,36 +211,33 @@ app.post("/webhook", (req, res) => {
   setImmediate(async () => {
     try {
 
-      console.log("SEPAY:", req.body);
-
       const { transferAmount, transferContent, status, id } = req.body;
 
       if (!transferAmount || !transferContent) return;
       if (status && status !== "success") return;
+      if (id && processed.includes(id)) return;
 
       const amount = Number(transferAmount);
       const desc = transferContent.trim();
 
-      if (id && processed.includes(id)) return;
-
-      let matchedCode = null;
+      let match = null;
       for (const code in pending) {
         if (desc.includes(code)) {
-          matchedCode = code;
+          match = code;
           break;
         }
       }
 
-      if (!matchedCode) return;
+      if (!match) return;
 
-      const data = pending[matchedCode];
+      const data = pending[match];
       if (data.amount !== amount) return;
 
       balances[data.userId] =
         (balances[data.userId] || 0) + amount;
 
       if (id) processed.push(id);
-      delete pending[matchedCode];
+      delete pending[match];
 
       save("./balances.json", balances);
       save("./pending.json", pending);
@@ -258,7 +248,7 @@ app.post("/webhook", (req, res) => {
         `💰 Nạp thành công ${amount.toLocaleString()} VNĐ\n💵 Số dư: ${balances[data.userId].toLocaleString()} VNĐ`
       );
 
-      console.log("NẠP OK:", data.userId, amount);
+      console.log("NAP OK:", data.userId, amount);
 
     } catch (err) {
       console.error("WEBHOOK ERROR:", err);
@@ -268,17 +258,13 @@ app.post("/webhook", (req, res) => {
 
 /* ================= START SERVER ================= */
 
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("Server running on port", PORT);
+app.listen(process.env.PORT, "0.0.0.0", () => {
+  console.log("Server running on port", process.env.PORT);
 });
 
 client.login(process.env.TOKEN)
   .then(() => console.log("Bot login success"))
   .catch(err => console.error("LOGIN ERROR:", err));
 
-/* ================= ANTI CRASH ================= */
-
-process.on("unhandledRejection", err => console.error(err));
-process.on("uncaughtException", err => console.error(err));
+process.on("unhandledRejection", console.error);
+process.on("uncaughtException", console.error);
