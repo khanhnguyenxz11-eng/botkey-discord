@@ -1,6 +1,5 @@
 require("dotenv").config();
 const express = require("express");
-const bodyParser = require("body-parser");
 const {
   Client,
   GatewayIntentBits,
@@ -11,16 +10,28 @@ const {
 } = require("discord.js");
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
+// ================= WEB SERVER (CHO RAILWAY) =================
+
+// Route chính
 app.get("/", (req, res) => {
   res.send("Bot is running!");
 });
 
+// Webhook test (sau này dùng cho bank)
+app.post("/webhook", (req, res) => {
+  console.log("Webhook received:", req.body);
+  res.status(200).send("OK");
+});
+
+// Bắt buộc Railway dùng PORT này
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Web server running on port " + PORT);
 });
+
+// ================= DISCORD BOT =================
 
 const client = new Client({
   intents: [
@@ -34,7 +45,8 @@ client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.on("messageCreate", async message => {
+// Lệnh !panel
+client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
   if (message.content === "!panel") {
@@ -46,17 +58,19 @@ client.on("messageCreate", async message => {
     );
 
     const embed = new EmbedBuilder()
-      .setTitle("Hệ thống nạp tiền")
-      .setDescription("Nhấn nút bên dưới để nạp tiền");
+      .setTitle("💳 Hệ thống nạp tiền")
+      .setDescription("Nhấn nút bên dưới để nạp tiền")
+      .setColor(0x00AE86);
 
-    message.channel.send({
+    await message.channel.send({
       embeds: [embed],
       components: [row]
     });
   }
 });
 
-client.on("interactionCreate", async interaction => {
+// Xử lý button
+client.on("interactionCreate", async (interaction) => {
   if (!interaction.isButton()) return;
 
   if (interaction.customId === "nap_tien") {
@@ -67,4 +81,22 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-client.login(process.env.TOKEN);
+// ================= CHỐNG CRASH =================
+
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled Rejection:", err);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+});
+
+// ================= LOGIN =================
+
+if (!process.env.TOKEN) {
+  console.log("❌ TOKEN chưa được thêm vào Railway Variables");
+} else {
+  client.login(process.env.TOKEN).catch(err => {
+    console.error("Login error:", err);
+  });
+}
