@@ -78,13 +78,13 @@ async function sendPanel() {
 
     const embed = new EmbedBuilder()
       .setColor("#00ff99")
-      .setTitle("🎮 SHOP MUA KEY")
+      .setTitle("🛒BUY KEY IPA AUTO")
       .addFields(
-        { name: "🔑 Tháng (120000đ)", value: `Còn: ${data.keys.thang.length}`, inline: true },
-        { name: "🔑 Tuần (70000đ)", value: `Còn: ${data.keys.tuan.length}`, inline: true },
-        { name: "🔑 Ngày (15000đ)", value: `Còn: ${data.keys.ngay.length}`, inline: true }
+        { name: "📦 Key Tháng : 120K", value: `🛍️Kho còn: ${data.keys.thang.length}`, inline: true },
+        { name: "📦 Key Tuần : 70K", value: `🛍️Kho còn: ${data.keys.tuan.length}`, inline: true },
+        { name: "📦 Key Ngày :15K", value: `🛍️Kho còn: ${data.keys.ngay.length}`, inline: true }
       )
-      .setFooter({ text: "Bot tự động • Ghi đúng ID khi nạp" });
+      .setFooter({ text: "Bot buy key tự động . Gặp vấn đề ib Admin" });
 
     const row1 = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("nap").setLabel("💳 Nạp tiền").setStyle(ButtonStyle.Success),
@@ -92,7 +92,7 @@ async function sendPanel() {
     );
 
     const row2 = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("buy").setLabel("🛒 Mua sản phẩm").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("buy").setLabel("🛒 Mua Key").setStyle(ButtonStyle.Secondary)
     );
 
     if (!panelMessage) {
