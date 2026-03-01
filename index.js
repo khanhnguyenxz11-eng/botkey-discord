@@ -15,21 +15,19 @@ const {
   TextInputStyle
 } = require("discord.js");
 
-/* ================== ANTI CRASH ================== */
+/* ================== SAFE MODE ================== */
 
-process.on("uncaughtException", err => console.error("Uncaught:", err));
-process.on("unhandledRejection", err => console.error("Unhandled:", err));
+process.on("uncaughtException", err => console.log("Error:", err));
+process.on("unhandledRejection", err => console.log("Reject:", err));
 
-/* ================== WEB SERVER ================== */
+/* ================== WEB ================== */
 
 const app = express();
 app.use(express.json());
 
-app.get("/", (req, res) => res.send("Bot is alive"));
+app.get("/", (req, res) => res.send("OK"));
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Web server running");
-});
+app.listen(process.env.PORT || 3000);
 
 /* ================== DISCORD ================== */
 
@@ -38,9 +36,6 @@ const client = new Client({
 });
 
 const DATA_FILE = "./data.json";
-let panelMessage = null;
-
-/* ================== DATA ================== */
 
 if (!fs.existsSync(DATA_FILE)) {
   fs.writeFileSync(DATA_FILE, JSON.stringify({
@@ -50,58 +45,45 @@ if (!fs.existsSync(DATA_FILE)) {
   }));
 }
 
-function loadData() {
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE));
-  } catch {
-    return { users: {}, transactions: [], keys: { thang: [], tuan: [], ngay: [] } };
-  }
-}
-
-function saveData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
+const loadData = () => JSON.parse(fs.readFileSync(DATA_FILE));
+const saveData = data => fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 
 /* ================== PANEL ================== */
 
 async function sendPanel() {
-  if (!process.env.PANEL_CHANNEL) return;
+  try {
+    if (!process.env.PANEL_CHANNEL) return;
 
-  const channel = await client.channels.fetch(process.env.PANEL_CHANNEL).catch(() => null);
-  if (!channel) return;
+    const channel = await client.channels.fetch(process.env.PANEL_CHANNEL).catch(() => null);
+    if (!channel) return;
 
-  const data = loadData();
+    const data = loadData();
 
-  const embed = new EmbedBuilder()
-    .setColor("#00ff99")
-    .setTitle("🛒 BUY KEY IPA AUTO")
-    .addFields(
-      { name: "📦 Key Tháng (120K)", value: `Kho: ${data.keys.thang.length}`, inline: true },
-      { name: "📦 Key Tuần (70K)", value: `Kho: ${data.keys.tuan.length}`, inline: true },
-      { name: "📦 Key Ngày (15K)", value: `Kho: ${data.keys.ngay.length}`, inline: true }
-    )
-    .setFooter({ text: "Bot tự động - IB admin nếu lỗi" });
+    const embed = new EmbedBuilder()
+      .setColor("#00ff99")
+      .setTitle("🛒 BUY KEY IPA AUTO")
+      .addFields(
+        { name: "Key Tháng", value: `${data.keys.thang.length} key`, inline: true },
+        { name: "Key Tuần", value: `${data.keys.tuan.length} key`, inline: true },
+        { name: "Key Ngày", value: `${data.keys.ngay.length} key`, inline: true }
+      );
 
-  const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("nap").setLabel("💳 Nạp tiền").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("balance").setLabel("💰 Số dư").setStyle(ButtonStyle.Primary)
-  );
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("nap").setLabel("💳 Nạp tiền").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("balance").setLabel("💰 Số dư").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("buy").setLabel("🛒 Mua Key").setStyle(ButtonStyle.Secondary)
+    );
 
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("buy").setLabel("🛒 Mua Key").setStyle(ButtonStyle.Secondary)
-  );
+    await channel.bulkDelete(5).catch(() => {});
+    await channel.send({ embeds: [embed], components: [row] });
 
-  if (!panelMessage) {
-    panelMessage = await channel.send({ embeds: [embed], components: [row1, row2] });
-  } else {
-    await panelMessage.edit({ embeds: [embed], components: [row1, row2] });
-  }
+  } catch {}
 }
 
 /* ================== READY ================== */
 
 client.once(Events.ClientReady, () => {
-  console.log("Bot online:", client.user.tag);
+  console.log("Bot ready");
   sendPanel();
 });
 
@@ -109,128 +91,112 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
+
     const data = loadData();
     const userId = interaction.user.id;
 
     if (!data.users[userId]) data.users[userId] = { balance: 0 };
 
-    /* ===== BUTTON ===== */
+    /* BUTTON */
 
     if (interaction.isButton()) {
 
-      if (interaction.customId === "balance") {
+      if (interaction.customId === "balance")
         return interaction.reply({
-          content: `💰 Số dư: ${data.users[userId].balance}đ`,
+          content: `💰 ${data.users[userId].balance}đ`,
           ephemeral: true
         });
-      }
 
       if (interaction.customId === "nap") {
         const modal = new ModalBuilder()
           .setCustomId("nap_modal")
           .setTitle("Nạp tiền");
 
-        const amountInput = new TextInputBuilder()
-          .setCustomId("amount_input")
+        const input = new TextInputBuilder()
+          .setCustomId("amount")
           .setLabel("Nhập số tiền (VNĐ)")
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
 
-        const row = new ActionRowBuilder().addComponents(amountInput);
-        modal.addComponents(row);
-
+        modal.addComponents(new ActionRowBuilder().addComponents(input));
         return interaction.showModal(modal);
       }
 
       if (interaction.customId === "buy") {
-        const menu = new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId("buy_menu")
-            .setPlaceholder("Chọn loại key")
-            .addOptions([
-              { label: "Key Tháng - 120000đ", value: "thang" },
-              { label: "Key Tuần - 70000đ", value: "tuan" },
-              { label: "Key Ngày - 15000đ", value: "ngay" }
-            ])
-        );
+        const menu = new StringSelectMenuBuilder()
+          .setCustomId("buy_select")
+          .setPlaceholder("Chọn key")
+          .addOptions([
+            { label: "Tháng - 120K", value: "thang" },
+            { label: "Tuần - 70K", value: "tuan" },
+            { label: "Ngày - 15K", value: "ngay" }
+          ]);
 
         return interaction.reply({
-          content: "🛒 Chọn sản phẩm:",
-          components: [menu],
+          components: [new ActionRowBuilder().addComponents(menu)],
           ephemeral: true
         });
       }
     }
 
-    /* ===== MODAL ===== */
+    /* MODAL */
 
     if (interaction.isModalSubmit()) {
 
-      if (interaction.customId === "nap_modal") {
+      const amount = parseInt(interaction.fields.getTextInputValue("amount"));
 
-        const amount = parseInt(interaction.fields.getTextInputValue("amount_input"));
+      if (!amount || amount < 1000)
+        return interaction.reply({ content: "❌ Tiền không hợp lệ", ephemeral: true });
 
-        if (isNaN(amount) || amount < 1000)
-          return interaction.reply({ content: "❌ Số tiền không hợp lệ", ephemeral: true });
+      const bank = process.env.BANK_NAME || "MBBANK";
+      const acc = process.env.BANK_ACC || "0000000000";
 
-        const bank = process.env.BANK_NAME;
-        const acc = process.env.BANK_ACC;
+      const qr = `https://img.vietqr.io/image/${bank}-${acc}-compact2.png?amount=${amount}&addInfo=ID${userId}`;
 
-        const qrUrl =
-          `https://img.vietqr.io/image/${bank}-${acc}-compact2.png?amount=${amount}&addInfo=ID${userId}`;
+      const embed = new EmbedBuilder()
+        .setTitle("💳 Quét QR để thanh toán")
+        .setDescription(`Số tiền: ${amount}đ\nNội dung: ID${userId}`)
+        .setImage(qr);
 
-        const embed = new EmbedBuilder()
-          .setColor("#00ff99")
-          .setTitle("💳 Quét QR để thanh toán")
-          .setDescription(
-            `💰 Số tiền: ${amount}đ\n` +
-            `📌 Nội dung bắt buộc: ID${userId}`
-          )
-          .setImage(qrUrl);
-
-        return interaction.reply({ embeds: [embed], ephemeral: true });
-      }
+      return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    /* ===== MUA KEY ===== */
+    /* SELECT */
 
     if (interaction.isStringSelectMenu()) {
 
-      const type = interaction.values[0];
       const prices = { thang: 120000, tuan: 70000, ngay: 15000 };
-      const price = prices[type];
+      const type = interaction.values[0];
 
-      if (data.users[userId].balance < price)
+      if (data.users[userId].balance < prices[type])
         return interaction.reply({ content: "❌ Không đủ tiền", ephemeral: true });
 
       if (data.keys[type].length === 0)
         return interaction.reply({ content: "❌ Hết key", ephemeral: true });
 
       const key = data.keys[type].shift();
-      data.users[userId].balance -= price;
+      data.users[userId].balance -= prices[type];
 
       saveData(data);
 
-      await interaction.reply({
-        content: `✅ Thành công!\n🔑 Key: ${key}`,
+      return interaction.reply({
+        content: `✅ Key: ${key}`,
         ephemeral: true
       });
-
-      sendPanel();
     }
 
   } catch (err) {
-    console.error("Interaction error:", err);
+    console.log("Interaction error:", err);
   }
 });
 
 /* ================== WEBHOOK ================== */
 
-app.post("/webhook", async (req, res) => {
+app.post("/webhook", (req, res) => {
   try {
-    const body = req.body;
 
-    if (!body.description) return res.sendStatus(200);
+    const body = req.body;
+    if (!body?.description) return res.sendStatus(200);
 
     const match = body.description.match(/ID(\d+)/);
     if (!match) return res.sendStatus(200);
@@ -250,25 +216,13 @@ app.post("/webhook", async (req, res) => {
 
     saveData(data);
 
-    if (process.env.SUCCESS_CHANNEL) {
-      const channel = await client.channels.fetch(process.env.SUCCESS_CHANNEL).catch(() => null);
-      if (channel)
-        channel.send(`💰 <@${userId}> đã nạp ${amount}đ`);
-    }
-
-    sendPanel();
     res.sendStatus(200);
 
-  } catch (err) {
-    console.error("Webhook error:", err);
+  } catch {
     res.sendStatus(200);
   }
 });
 
 /* ================== LOGIN ================== */
 
-if (!process.env.TOKEN) {
-  console.error("TOKEN chưa cấu hình!");
-} else {
-  client.login(process.env.TOKEN).catch(console.error);
-}
+client.login(process.env.TOKEN);
