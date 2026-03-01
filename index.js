@@ -9,31 +9,24 @@ const {
   ButtonStyle,
   StringSelectMenuBuilder,
   EmbedBuilder,
-  Events,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle
+  Events
 } = require("discord.js");
 
-/* ================== SAFE MODE ================== */
-
-process.on("uncaughtException", err => console.log("Error:", err));
-process.on("unhandledRejection", err => console.log("Reject:", err));
-
-/* ================== WEB ================== */
+/* ================= WEB SERVER ================= */
 
 const app = express();
 app.use(express.json());
 
 app.get("/", (req, res) => res.send("OK"));
-
 app.listen(process.env.PORT || 3000);
 
-/* ================== DISCORD ================== */
+/* ================= DISCORD ================= */
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
+
+/* ================= DATA (LOAD 1 LẦN) ================= */
 
 const DATA_FILE = "./data.json";
 
@@ -45,27 +38,28 @@ if (!fs.existsSync(DATA_FILE)) {
   }));
 }
 
-const loadData = () => JSON.parse(fs.readFileSync(DATA_FILE));
-const saveData = data => fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+let data = JSON.parse(fs.readFileSync(DATA_FILE));
 
-/* ================== PANEL ================== */
+function save() {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data));
+}
+
+/* ================= PANEL ================= */
 
 async function sendPanel() {
   try {
     if (!process.env.PANEL_CHANNEL) return;
 
-    const channel = await client.channels.fetch(process.env.PANEL_CHANNEL).catch(() => null);
+    const channel = await client.channels.fetch(process.env.PANEL_CHANNEL);
     if (!channel) return;
-
-    const data = loadData();
 
     const embed = new EmbedBuilder()
       .setColor("#00ff99")
       .setTitle("🛒 BUY KEY IPA AUTO")
       .addFields(
-        { name: "Key Tháng", value: `${data.keys.thang.length} key`, inline: true },
-        { name: "Key Tuần", value: `${data.keys.tuan.length} key`, inline: true },
-        { name: "Key Ngày", value: `${data.keys.ngay.length} key`, inline: true }
+        { name: "Tháng (120K)", value: `${data.keys.thang.length}`, inline: true },
+        { name: "Tuần (70K)", value: `${data.keys.tuan.length}`, inline: true },
+        { name: "Ngày (15K)", value: `${data.keys.ngay.length}`, inline: true }
       );
 
     const row = new ActionRowBuilder().addComponents(
@@ -74,155 +68,117 @@ async function sendPanel() {
       new ButtonBuilder().setCustomId("buy").setLabel("🛒 Mua Key").setStyle(ButtonStyle.Secondary)
     );
 
-    await channel.bulkDelete(5).catch(() => {});
     await channel.send({ embeds: [embed], components: [row] });
 
   } catch {}
 }
 
-/* ================== READY ================== */
+/* ================= READY ================= */
 
 client.once(Events.ClientReady, () => {
-  console.log("Bot ready");
+  console.log("Bot Online");
   sendPanel();
 });
 
-/* ================== INTERACTION ================== */
+/* ================= INTERACTION ================= */
 
 client.on(Events.InteractionCreate, async interaction => {
-  try {
 
-    const data = loadData();
-    const userId = interaction.user.id;
+  const userId = interaction.user.id;
+  if (!data.users[userId]) data.users[userId] = { balance: 0 };
 
-    if (!data.users[userId]) data.users[userId] = { balance: 0 };
+  /* ===== BUTTON ===== */
 
-    /* BUTTON */
+  if (interaction.isButton()) {
 
-    if (interaction.isButton()) {
-
-      if (interaction.customId === "balance")
-        return interaction.reply({
-          content: `💰 ${data.users[userId].balance}đ`,
-          ephemeral: true
-        });
-
-      if (interaction.customId === "nap") {
-        const modal = new ModalBuilder()
-          .setCustomId("nap_modal")
-          .setTitle("Nạp tiền");
-
-        const input = new TextInputBuilder()
-          .setCustomId("amount")
-          .setLabel("Nhập số tiền (VNĐ)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-
-        modal.addComponents(new ActionRowBuilder().addComponents(input));
-        return interaction.showModal(modal);
-      }
-
-      if (interaction.customId === "buy") {
-        const menu = new StringSelectMenuBuilder()
-          .setCustomId("buy_select")
-          .setPlaceholder("Chọn key")
-          .addOptions([
-            { label: "Tháng - 120K", value: "thang" },
-            { label: "Tuần - 70K", value: "tuan" },
-            { label: "Ngày - 15K", value: "ngay" }
-          ]);
-
-        return interaction.reply({
-          components: [new ActionRowBuilder().addComponents(menu)],
-          ephemeral: true
-        });
-      }
-    }
-
-    /* MODAL */
-
-    if (interaction.isModalSubmit()) {
-
-      const amount = parseInt(interaction.fields.getTextInputValue("amount"));
-
-      if (!amount || amount < 1000)
-        return interaction.reply({ content: "❌ Tiền không hợp lệ", ephemeral: true });
-
-      const bank = process.env.BANK_NAME || "MBBANK";
-      const acc = process.env.BANK_ACC || "0000000000";
-
-      const qr = `https://img.vietqr.io/image/${bank}-${acc}-compact2.png?amount=${amount}&addInfo=ID${userId}`;
-
-      const embed = new EmbedBuilder()
-        .setTitle("💳 Quét QR để thanh toán")
-        .setDescription(`Số tiền: ${amount}đ\nNội dung: ID${userId}`)
-        .setImage(qr);
-
-      return interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-
-    /* SELECT */
-
-    if (interaction.isStringSelectMenu()) {
-
-      const prices = { thang: 120000, tuan: 70000, ngay: 15000 };
-      const type = interaction.values[0];
-
-      if (data.users[userId].balance < prices[type])
-        return interaction.reply({ content: "❌ Không đủ tiền", ephemeral: true });
-
-      if (data.keys[type].length === 0)
-        return interaction.reply({ content: "❌ Hết key", ephemeral: true });
-
-      const key = data.keys[type].shift();
-      data.users[userId].balance -= prices[type];
-
-      saveData(data);
-
+    if (interaction.customId === "balance") {
       return interaction.reply({
-        content: `✅ Key: ${key}`,
+        content: `💰 Số dư: ${data.users[userId].balance}đ`,
         ephemeral: true
       });
     }
 
-  } catch (err) {
-    console.log("Interaction error:", err);
+    if (interaction.customId === "nap") {
+      return interaction.reply({
+        content:
+`💳 Nhập số tiền bạn muốn nạp bằng lệnh:
+
+/nap 50000
+
+Nội dung chuyển khoản: ID${userId}`,
+        ephemeral: true
+      });
+    }
+
+    if (interaction.customId === "buy") {
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId("buy_select")
+        .setPlaceholder("Chọn loại key")
+        .addOptions([
+          { label: "Key Tháng - 120000đ", value: "thang" },
+          { label: "Key Tuần - 70000đ", value: "tuan" },
+          { label: "Key Ngày - 15000đ", value: "ngay" }
+        ]);
+
+      return interaction.reply({
+        components: [new ActionRowBuilder().addComponents(menu)],
+        ephemeral: true
+      });
+    }
   }
+
+  /* ===== SELECT ===== */
+
+  if (interaction.isStringSelectMenu()) {
+
+    const prices = { thang: 120000, tuan: 70000, ngay: 15000 };
+    const type = interaction.values[0];
+
+    if (data.users[userId].balance < prices[type])
+      return interaction.reply({ content: "❌ Không đủ tiền", ephemeral: true });
+
+    if (data.keys[type].length === 0)
+      return interaction.reply({ content: "❌ Hết key", ephemeral: true });
+
+    const key = data.keys[type].shift();
+    data.users[userId].balance -= prices[type];
+
+    save();
+
+    return interaction.reply({
+      content: `✅ Key của bạn: ${key}`,
+      ephemeral: true
+    });
+  }
+
 });
 
-/* ================== WEBHOOK ================== */
+/* ================= WEBHOOK ================= */
 
 app.post("/webhook", (req, res) => {
-  try {
 
-    const body = req.body;
-    if (!body?.description) return res.sendStatus(200);
+  const body = req.body;
+  if (!body?.description) return res.sendStatus(200);
 
-    const match = body.description.match(/ID(\d+)/);
-    if (!match) return res.sendStatus(200);
+  const match = body.description.match(/ID(\d+)/);
+  if (!match) return res.sendStatus(200);
 
-    const userId = match[1];
-    const amount = parseInt(body.transferAmount);
+  const userId = match[1];
+  const amount = parseInt(body.transferAmount);
 
-    const data = loadData();
+  if (data.transactions.includes(body.transactionID))
+    return res.sendStatus(200);
 
-    if (data.transactions.includes(body.transactionID))
-      return res.sendStatus(200);
+  data.transactions.push(body.transactionID);
 
-    data.transactions.push(body.transactionID);
+  if (!data.users[userId]) data.users[userId] = { balance: 0 };
+  data.users[userId].balance += amount;
 
-    if (!data.users[userId]) data.users[userId] = { balance: 0 };
-    data.users[userId].balance += amount;
+  save();
 
-    saveData(data);
-
-    res.sendStatus(200);
-
-  } catch {
-    res.sendStatus(200);
-  }
+  res.sendStatus(200);
 });
 
-/* ================== LOGIN ================== */
+/* ================= LOGIN ================= */
 
 client.login(process.env.TOKEN);
